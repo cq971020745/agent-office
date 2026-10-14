@@ -1,0 +1,11 @@
+services:
+  app:
+    build: ./apps/server
+    ports:
+      - "8787:8787"
+    environment:
+      - DATA_DIR=/app/data
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

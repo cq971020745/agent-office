@@ -1,0 +1,16 @@
+{
+  "name": "@office/pi-office-suite",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI 办公平台内置 pi 插件包：todo 清单工具、写操作护栏",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["extensions/*.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

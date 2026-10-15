@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -100,16 +100,48 @@ app.whenReady().then(() => {
     return result.filePaths[0]!;
   });
 
-  // 在系统文件管理器中打开一个本地目录（专家文件夹等）
-  ipcMain.handle("agent-office:open-path", async (_event, dir: unknown) => {
-    if (typeof dir !== "string" || !path.isAbsolute(dir)) return { ok: false, message: "路径无效" };
+  // 在系统文件管理器中打开目录，或用系统默认程序打开本地文件（如用 WPS 打开 .docx/.xlsx）
+  ipcMain.handle("agent-office:open-path", async (_event, target: unknown) => {
+    if (typeof target !== "string" || !path.isAbsolute(target)) return { ok: false, message: "路径无效" };
     try {
-      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return { ok: false, message: "目录不存在" };
+      if (!fs.existsSync(target)) return { ok: false, message: "路径不存在" };
     } catch {
-      return { ok: false, message: "目录不可访问" };
+      return { ok: false, message: "路径不可访问" };
     }
-    const err = await shell.openPath(dir);
+    const err = await shell.openPath(target);
     return err ? { ok: false, message: err } : { ok: true };
+  });
+
+  // 在系统文件管理器中定位并高亮指定文件
+  ipcMain.handle("agent-office:show-item-in-folder", async (_event, target: unknown) => {
+    if (typeof target !== "string" || !path.isAbsolute(target)) return { ok: false, message: "路径无效" };
+    try {
+      if (!fs.existsSync(target)) return { ok: false, message: "文件不存在" };
+      shell.showItemInFolder(target);
+      return { ok: true };
+    } catch {
+      return { ok: false, message: "无法在文件夹中显示" };
+    }
+  });
+
+  // 发送桌面原生系统通知（后台任务完成/待人工确认时提醒用户）
+  ipcMain.handle("agent-office:notify", async (event, payload: unknown) => {
+    if (!Notification.isSupported() || !payload || typeof payload !== "object") return { ok: false };
+    const { title, body } = payload as { title?: unknown; body?: unknown };
+    if (typeof title !== "string" || !title.trim()) return { ok: false };
+    const n = new Notification({
+      title: title.trim(),
+      body: typeof body === "string" ? body : "",
+    });
+    n.on("click", () => {
+      const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getAllWindows()[0];
+      if (win) {
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      }
+    });
+    n.show();
+    return { ok: true };
   });
 
   createWindow();

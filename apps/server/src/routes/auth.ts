@@ -1,4 +1,5 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import os from "node:os";
+import type { FastifyInstance } from "fastify";
 import {
   countUsers,
   createUser,
@@ -34,6 +35,29 @@ function loginLockedFor(key: string): number {
   return 0;
 }
 
+function normalizeIp(ip: string): string {
+  return ip.toLowerCase().replace(/^::ffff:/, "");
+}
+
+/** 仅本机可重置密码：回环地址，或连到本机自己网卡地址的请求。局域网其他电脑不能改。 */
+function isLocalClient(ip: string): boolean {
+  const host = normalizeIp(ip);
+  if (host === "127.0.0.1" || host === "::1") return true;
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (normalizeIp(entry.address) === host) return true;
+    }
+  }
+  return false;
+}
+
+function clearLoginFailsForUser(username: string): void {
+  const prefix = `${username.toLowerCase()}|`;
+  for (const key of loginFails.keys()) {
+    if (key.startsWith(prefix)) loginFails.delete(key);
+  }
+}
+
 function recordLoginFail(key: string): void {
   const nowMs = Date.now();
   const entry = loginFails.get(key);
@@ -54,12 +78,18 @@ function recordLoginFail(key: string): void {
 export function registerAuthRoutes(app: FastifyInstance): void {
   app.post("/auth/register", async (req, reply) => {
     const { username, password } = (req.body ?? {}) as { username?: string; password?: string };
-    if (!username || !password) return reply.code(400).send({ error: "username and password required" });
-    if (getUserByUsername(username)) return reply.code(409).send({ error: "username taken" });
-    if (countUsers() > 0) {
-      return reply.code(403).send({ error: "registration is closed; ask an admin to create your account" });
+    const normalizedUsername = username?.trim();
+    if (!normalizedUsername || !password) {
+      return reply.code(400).send({ error: "username and password required" });
     }
-    const user = createUser(username, password, "admin");
+    if (password.length < 6) {
+      return reply.code(400).send({ error: "password must be at least 6 characters" });
+    }
+    if (getUserByUsername(normalizedUsername)) return reply.code(409).send({ error: "username taken" });
+
+    // 空库的首个账号负责平台初始化；此后的用户均可自行注册为普通成员。
+    const role = countUsers() === 0 ? "admin" : "member";
+    const user = createUser(normalizedUsername, password, role);
     const token = app.jwt.sign({ sub: user.id, role: user.role });
     return reply.send({ token, user: { id: user.id, username: user.username, role: user.role } });
   });
@@ -79,6 +109,28 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       return reply.code(401).send({ error: "invalid credentials" });
     }
     loginFails.delete(key);
+    const token = app.jwt.sign({ sub: user.id, role: user.role });
+    return reply.send({ token, user: { id: user.id, username: user.username, role: user.role } });
+  });
+
+  // 登录页「忘记密码」：未登录时在本机按用户名设置新密码并直接登录。
+  // 不向局域网开放，避免知道用户名就能接管别人的账号。
+  app.post("/auth/reset-password", async (req, reply) => {
+    if (!isLocalClient(req.ip)) {
+      return reply.code(403).send({ error: "password reset is only available on this computer" });
+    }
+    const { username, newPassword } = (req.body ?? {}) as { username?: string; newPassword?: string };
+    const normalizedUsername = username?.trim();
+    if (!normalizedUsername || !newPassword) {
+      return reply.code(400).send({ error: "username and new password required" });
+    }
+    if (newPassword.length < 6) {
+      return reply.code(400).send({ error: "password must be at least 6 characters" });
+    }
+    const user = getUserByUsername(normalizedUsername);
+    if (!user) return reply.code(404).send({ error: "user not found" });
+    updatePassword(user.id, newPassword);
+    clearLoginFailsForUser(normalizedUsername);
     const token = app.jwt.sign({ sub: user.id, role: user.role });
     return reply.send({ token, user: { id: user.id, username: user.username, role: user.role } });
   });

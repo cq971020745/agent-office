@@ -5,20 +5,22 @@ import {
   SessionManager,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import { Type, type Model } from "@earendil-works/pi-ai";
+import type { TaskTurnStep } from "@office/shared";
 import fs from "node:fs";
 import path from "node:path";
 import { codeExecToolIfAvailable, hasCodeExec } from "./codeExec.js";
 import { paths } from "./config.js";
 import { db, now, uuid } from "./db.js";
+import { createHostTerminalTool } from "./host-terminal.js";
 import { readAgentsMd } from "./instructions.js";
 import { getMcpTools } from "./mcp.js";
 import { parseModelOverrides, resolveModelCaps } from "./model-caps.js";
 import { skillScriptTool } from "./skill-scripts.js";
 import { buildSkillsPrompt, expandSkillSlash, readSkillTool } from "./skills.js";
 import { publishPi, publishStatus, publishUser } from "./sse.js";
-import { cancelToolApproval, requestToolApproval } from "./tool-approval.js";
-import { parseToolPolicy, policyFor } from "./tool-policy.js";
+import { cancelToolApproval, hasSessionGrant, requestToolApproval } from "./tool-approval.js";
+import { parseToolPolicy, policyFor, toolNeedsApproval } from "./tool-policy.js";
 import { workspaceTools } from "./tools.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -42,8 +44,8 @@ const OFFICE_PREAMBLE = `You are a task-executing agent in an office automation 
 
 Environment:
 - Each task gets an isolated workspace directory (currently empty). Treat it as your office desk.
-- All output files (reports, drafts, code, data) MUST be written there with the workspace_write tool. Deliverables are collected from that directory.
-- Use workspace_list / workspace_read to inspect files in the workspace, and fetch_url to read web pages when needed.
+- All output files (reports, drafts, code, data) MUST be written there with the workspace_write or workspace_edit tool. Deliverables are collected from that directory.
+- Use workspace_list / workspace_read to inspect files in the workspace, transcribe_audio to transcribe any audio files (.wav/.mp3/.m4a/.webm/.ogg) into text, and fetch_url to read web pages when needed.
 - You have no shell access on purpose: produce files, not terminal effects.
 - When the task is complete, end with a short final message summarizing what you produced (mention file names).`;
 
@@ -51,13 +53,21 @@ const USER_DIR_PREAMBLE = `You are a task-executing agent in an office automatio
 
 Environment:
 - You are working inside a directory CHOSEN BY THE USER (your current workspace). It may already contain files; use workspace_list / workspace_read to inspect them before overwriting anything.
-- All output files MUST be written into that directory with the workspace_write tool. Deliverables are collected from files created or modified during this task.
-- fetch_url is available to read web pages when needed.
+- All output files MUST be written into that directory with the workspace_write or workspace_edit tool. Deliverables are collected from files created or modified during this task.
+- transcribe_audio is available to transcribe audio files (.wav/.mp3/.m4a/.webm/.ogg), and fetch_url is available to read web pages when needed.
 - You have no shell access on purpose: produce files, not terminal effects.
 - When the task is complete, end with a short final message summarizing what you produced (mention file names).`;
 
+const NO_SHELL_LINE = "- You have no shell access on purpose: produce files, not terminal effects.";
+
+const TERMINAL_NOTE =
+  "- The terminal tool runs host commands in this task workspace (PowerShell on Windows, bash on Linux/macOS). It uses the current server process privileges and does not elevate. Each call needs approval unless the user has allowed that tool for this task session. Use it to run workspace scripts such as .ps1, .py, .js, .bat, and .cmd.";
+
+const DOC_NOTE =
+  "- Office, PDF, and legacy Word files are binary. Do not read them with workspace_read. Call doc_to_md with outputDir under the hidden .parsed/ directory, then workspace_read the Saved-To markdown. Do not upload a local attachment to WPS cloud just to extract its text.";
+
 const CODE_EXEC_NOTE =
-  "- You have no shell access, but the run_code tool executes a JavaScript/Python script in a network-isolated container with this workspace mounted read-only at /workspace. Use it for computation, data processing, or verifying generated code, then write results with workspace_write.";
+  "- The run_code tool executes a JavaScript/Python script in a network-isolated container with this workspace mounted read-only at /workspace. Use it for untrusted computation. It does not replace terminal, and it cannot reach office APIs.";
 
 /** 组装环境提示词：根据工作区类型、run_code 可用性与是否带附件动态生成。 */
 export function buildPreamble(
@@ -80,8 +90,8 @@ export function buildPreamble(
       "\n- The run_skill_script tool executes Python scripts bundled inside installed platform skills (see <platform_skills>) on the host, with the skill's own environment (e.g. WPS 365 login credentials) already injected. This reaches office APIs (contacts, IM chats, cloud docs, calendar, mail) that run_code's network-isolated sandbox cannot. Read the skill's docs with read_skill first, then run its scripts through this tool.\n- When the task is complete"
     );
   }
-  if (!codeExec) return base;
-  return base.replace("- You have no shell access on purpose: produce files, not terminal effects.", CODE_EXEC_NOTE);
+  const capabilityNotes = [TERMINAL_NOTE, DOC_NOTE, codeExec ? CODE_EXEC_NOTE : ""].filter(Boolean).join("\n");
+  return base.replace(NO_SHELL_LINE, capabilityNotes);
 }
 
 /** 用 model_providers 行在内存中注册一个 OpenAI 兼容供应商，并构造对应 Model。 */
@@ -216,6 +226,20 @@ const sessions = new Map<string, AgentSession>();
 const busy = new Set<string>();
 const cancelRequested = new Set<string>();
 const lastActivity = new Map<string, number>();
+const turnTraces = new Map<string, { thinking: string; steps: TaskTurnStep[] }>();
+
+function summarizeToolDetail(toolName: string, args: Record<string, unknown> | undefined): string | undefined {
+  if (!args) return undefined;
+  if (typeof args.path === "string" && args.path) return args.path;
+  if (typeof args.agent === "string" && args.agent) return args.agent;
+  if (typeof args.skill === "string" && args.skill) {
+    return typeof args.script === "string" ? `${args.skill}/${args.script}` : args.skill;
+  }
+  if (typeof args.name === "string" && args.name) return args.name;
+  if (typeof args.command === "string" && args.command) return args.command.slice(0, 160);
+  if (typeof args.url === "string" && args.url) return args.url;
+  return undefined;
+}
 
 function insertUserMessage(taskId: string, content: string): void {
   db.prepare("INSERT INTO task_messages (id, task_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)").run(
@@ -226,13 +250,17 @@ function insertUserMessage(taskId: string, content: string): void {
   );
 }
 
-function insertAssistantMessage(taskId: string, content: string): void {
-  db.prepare("INSERT INTO task_messages (id, task_id, role, content, created_at) VALUES (?, ?, 'assistant', ?, ?)").run(
-    uuid(),
-    taskId,
-    content,
-    now()
-  );
+function insertAssistantMessage(
+  taskId: string,
+  content: string,
+  trace?: { thinking: string; steps: TaskTurnStep[] }
+): void {
+  const meta: { thinking?: string; steps?: TaskTurnStep[] } = {};
+  if (trace?.thinking.trim()) meta.thinking = trace.thinking.trim();
+  if (trace?.steps.length) meta.steps = trace.steps;
+  db.prepare(
+    "INSERT INTO task_messages (id, task_id, role, content, meta, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)"
+  ).run(uuid(), taskId, content, JSON.stringify(meta), now());
 }
 
 /** 取最后一条 assistant 消息的纯文本（最终答复落库用）。 */
@@ -252,10 +280,139 @@ function extractAssistantText(session: AgentSession): string {
   return "";
 }
 
+const DelegateParams = Type.Object({
+  agent: Type.String({
+    description: "Target expert name or ID (e.g. '公文写作助手', '深度研究员', or exact agent name)",
+  }),
+  task: Type.String({
+    description: "Clear sub-task instructions and expected output files for the delegated expert",
+  }),
+});
+
+export interface DelegatedAgentLookupRow {
+  id: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  provider_id: string | null;
+  model_id: string | null;
+  tool_policy: string | null;
+}
+
+/** 按名称或 ID 匹配可委派的目标专家（精确匹配 > 包含匹配，排除当前专家自身） */
+export function resolveDelegatedAgent(
+  query: string,
+  candidates: DelegatedAgentLookupRow[],
+  excludeAgentName?: string
+): DelegatedAgentLookupRow | undefined {
+  const q = query.trim().toLowerCase();
+  if (!q) return undefined;
+  const pool = excludeAgentName
+    ? candidates.filter((c) => c.name.toLowerCase() !== excludeAgentName.trim().toLowerCase())
+    : candidates;
+  return (
+    pool.find((c) => c.id.toLowerCase() === q || c.name.toLowerCase() === q) ??
+    pool.find((c) => c.name.toLowerCase().includes(q) || q.includes(c.name.toLowerCase()))
+  );
+}
+
 /**
- * 取回（或恢复）任务对应的 AgentSession。
- * 内存里有就直接复用；没有则按 session_id 从 JSONL 恢复（服务重启场景），彻底没有才新建。
+ * 构建多专家协作委派工具（delegate_to_agent）：
+ * 允许主控专家将专项子任务委派给平台内其它专家，共享当前任务工作区并返回子专家总结。
  */
+function buildDelegateTool(parentRow: TaskJoinRow): ToolDefinition<typeof DelegateParams> {
+  return {
+    name: "delegate_to_agent",
+    label: "委派其他专家",
+    description:
+      "Delegate a specialized sub-task to another expert (Agent) in the platform. The sub-agent shares the current task workspace (can read/write files) and returns its final summary.",
+    parameters: DelegateParams,
+    execute: async (_id, params) => {
+      const candidates = db
+        .prepare(
+          "SELECT id, name, description, system_prompt, provider_id, model_id, tool_policy FROM agents WHERE deleted = 0 ORDER BY created_at"
+        )
+        .all() as unknown as DelegatedAgentLookupRow[];
+      const target = resolveDelegatedAgent(params.agent, candidates, parentRow.agent_name);
+      if (!target) {
+        const available = candidates
+          .filter((c) => c.name !== parentRow.agent_name)
+          .map((c) => c.name)
+          .join("、");
+        throw new Error(`未找到匹配的专家「${params.agent}」。当前可委派专家：${available || "无"}`);
+      }
+
+      const providerId = target.provider_id || parentRow.provider_id;
+      const modelId = target.model_id || parentRow.model_id;
+      if (!providerId || !modelId) {
+        throw new Error(`目标专家「${target.name}」未绑定可用模型`);
+      }
+      const prov = db
+        .prepare("SELECT id AS provider_id, name, base_url, api_key, model_overrides FROM model_providers WHERE id = ?")
+        .get(providerId) as ProviderRow | undefined;
+      if (!prov || !prov.base_url) {
+        throw new Error(`目标专家「${target.name}」的模型供应商不可用`);
+      }
+
+      const { runtime, model } = await buildRuntimeAndModel(prov, modelId);
+      const codeExecAvailable = await hasCodeExec();
+      const skillsPrompt = buildSkillsPrompt(target.id);
+      const basePreamble = buildPreamble(!!parentRow.custom_workspace, codeExecAvailable, true, !!skillsPrompt);
+      const platformInstructions = readAgentsMd().trim();
+
+      const loader = new DefaultResourceLoader({
+        cwd: parentRow.workspace_path,
+        agentDir: paths.agentDir,
+        systemPromptOverride: () =>
+          `${basePreamble}${
+            platformInstructions ? `\n\n<platform_instructions>\n${platformInstructions}\n</platform_instructions>` : ""
+          }\n\nYou are "${target.name}" (acting as a specialist sub-agent delegated by "${parentRow.agent_name}"). Your persona and instructions:\n\n${target.system_prompt}${
+            skillsPrompt ? `\n\n<platform_skills>\n${skillsPrompt}\n</platform_skills>` : ""
+          }`,
+        appendSystemPromptOverride: () => [],
+      });
+      await loader.reload();
+
+      const subSessionManager = SessionManager.create(parentRow.workspace_path, paths.sessions);
+      const mcpTools = await getMcpTools();
+      const codeTools = codeExecAvailable ? await codeExecToolIfAvailable(parentRow.workspace_path) : [];
+      const skillTools = skillsPrompt ? [readSkillTool(), skillScriptTool()] : [];
+      // 子专家不注入 delegate_to_agent，防止递归死循环。会话授权跟父任务走。
+      const subAllTools: ToolDefinition[] = [
+        ...workspaceTools(parentRow.workspace_path),
+        createHostTerminalTool(parentRow.workspace_path),
+        ...skillTools,
+        ...mcpTools,
+        ...codeTools,
+      ];
+      const subCustomTools = prepareCustomTools(parentRow.id, subAllTools, target.tool_policy);
+
+      const created = await createAgentSession({
+        cwd: parentRow.workspace_path,
+        sessionManager: subSessionManager,
+        modelRuntime: runtime,
+        model,
+        noTools: "builtin",
+        customTools: subCustomTools,
+        resourceLoader: loader,
+      });
+
+      const subSession = created.session;
+      const keepAlive = setInterval(() => lastActivity.set(parentRow.id, Date.now()), 15_000);
+      keepAlive.unref();
+      try {
+        await subSession.prompt(params.task);
+        const reply = extractAssistantText(subSession).trim() || "（子专家已完成操作，详见工作区文件）";
+        return {
+          content: [{ type: "text", text: `[来自专家「${target.name}」的协作结果]\n\n${reply}` }],
+          details: undefined,
+        };
+      } finally {
+        clearInterval(keepAlive);
+      }
+    },
+  };
+}
 async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
   if (!row.provider_id || !row.model_id || !row.base_url) {
     throw new Error("模型不可用：供应商已删除或专家未绑定模型，请重新选择模型");
@@ -322,13 +479,19 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
   if (codeTools.length) console.log(`[runner] 任务 ${row.id} 注入 run_code（Docker 隔离代码执行）`);
 
   const skillTools = skillsPrompt ? [readSkillTool(), skillScriptTool()] : [];
+  const delegateTool = buildDelegateTool(row);
 
-  // 专家级工具策略（P2-2）：deny 的工具注入前直接过滤；ask 的包一层审批等待
-  const policy = parseToolPolicy(row.tool_policy);
-  const allTools: ToolDefinition[] = [...workspaceTools(row.workspace_path), ...skillTools, ...mcpTools, ...codeTools];
-  const customTools = allTools
-    .filter((t) => policyFor(policy, t.name) !== "deny")
-    .map((t) => (policyFor(policy, t.name) === "ask" ? gateTool(row.id, t) : t));
+  // 专家级工具策略：deny 直接不注入；ask 与默认询问的 terminal 包一层审批。
+  // 会话授权在每次执行时现查，本会话允许和撤销都不用重建会话。
+  const allTools: ToolDefinition[] = [
+    ...workspaceTools(row.workspace_path),
+    createHostTerminalTool(row.workspace_path),
+    ...skillTools,
+    delegateTool,
+    ...mcpTools,
+    ...codeTools,
+  ];
+  const customTools = prepareCustomTools(row.id, allTools, row.tool_policy);
 
   const created = await createAgentSession({
     cwd: row.workspace_path,
@@ -347,6 +510,28 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
 
   session.subscribe((event) => {
     lastActivity.set(row.id, Date.now());
+    const ev = event as {
+      type: string;
+      assistantMessageEvent?: { type?: string; delta?: string };
+      toolName?: string;
+      args?: Record<string, unknown>;
+      isError?: boolean;
+    };
+    const trace = turnTraces.get(row.id);
+    if (trace) {
+      if (ev.type === "message_update" && ev.assistantMessageEvent?.type === "thinking_delta" && ev.assistantMessageEvent.delta) {
+        trace.thinking += ev.assistantMessageEvent.delta;
+        if (trace.thinking.length > 4000) trace.thinking = "…" + trace.thinking.slice(-3800);
+      } else if (ev.type === "tool_execution_start" && ev.toolName && trace.steps.length < 50) {
+        trace.steps.push({
+          tool: ev.toolName,
+          detail: summarizeToolDetail(ev.toolName, ev.args),
+          status: "done",
+        });
+      } else if (ev.type === "tool_execution_end" && ev.isError && trace.steps.length > 0) {
+        trace.steps[trace.steps.length - 1]!.status = "error";
+      }
+    }
     try {
       publishPi(row.id, event as { type: string } & Record<string, unknown>);
     } catch {
@@ -358,6 +543,7 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
 
 function beginTurn(taskId: string): void {
   busy.add(taskId);
+  turnTraces.set(taskId, { thinking: "", steps: [] });
   lastActivity.set(taskId, Date.now());
   db.prepare("UPDATE tasks SET status = 'running', started_at = COALESCE(started_at, ?), error = NULL WHERE id = ?").run(
     now(),
@@ -366,11 +552,22 @@ function beginTurn(taskId: string): void {
   publishStatus(taskId, "running");
 }
 
-/** ask 级工具包装（P2-2）：执行前先等用户审批；等待期间刷新 lastActivity，避免 180 秒看门狗中止会话。 */
+/** deny 滤掉；需要询问的工具套上审批。会话授权不在这里展开，避免撤销后仍被放行。 */
+function prepareCustomTools(taskId: string, tools: ToolDefinition[], policyRaw: string | null): ToolDefinition[] {
+  const policy = parseToolPolicy(policyRaw);
+  return tools
+    .filter((tool) => policyFor(policy, tool.name) !== "deny")
+    .map((tool) => (toolNeedsApproval(policy, tool.name, false) ? gateTool(taskId, tool) : tool));
+}
+
+/** ask 级工具包装：已有会话授权则直接执行；否则先等用户审批。等待期间刷新 lastActivity，避免 180 秒看门狗中止会话。 */
 function gateTool(taskId: string, tool: ToolDefinition): ToolDefinition {
   return {
     ...tool,
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+      if (hasSessionGrant(taskId, tool.name)) {
+        return tool.execute(toolCallId, params, signal, onUpdate, ctx);
+      }
       const keepAlive = setInterval(() => lastActivity.set(taskId, Date.now()), 30_000);
       keepAlive.unref();
       try {
@@ -387,6 +584,7 @@ function gateTool(taskId: string, tool: ToolDefinition): ToolDefinition {
 function endTurn(taskId: string): void {
   busy.delete(taskId);
   cancelRequested.delete(taskId);
+  turnTraces.delete(taskId);
   // lastActivity 保留：会话回收 sweeper 依据「最后一次事件时间」判闲置
 }
 
@@ -494,7 +692,10 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
     }
 
     const text = extractAssistantText(session);
-    if (text) insertAssistantMessage(row.id, text);
+    const trace = turnTraces.get(row.id);
+    if (text || trace?.thinking || trace?.steps.length) {
+      insertAssistantMessage(row.id, text || "（已完成工具调用）", trace);
+    }
     scanDeliverables(row.id, row.workspace_path, deliverableSinceMs(row.id));
 
     // 高风险规划轮：任务停在 awaiting_approval，等用户在界面上逐项确认（POST /tasks/:id/approve）后才继续

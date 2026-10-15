@@ -42,7 +42,8 @@ export interface AgentConfig {
   id: string;
   name: string;
   description: string;
-  systemPrompt: string;
+  /** 系统提示词（D8：仅向管理员返回，普通成员访问 GET /agents/:id 时省略） */
+  systemPrompt?: string;
   /** 默认供应商与模型；为空表示专家不绑定模型，派发任务时再选择 */
   providerId: string;
   providerName: string;
@@ -194,6 +195,8 @@ export interface TaskPageCounts {
   all: number;
   /** 进行中（含排队 pending） */
   running: number;
+  /** 待人工确认（高风险计划待确认） */
+  awaiting_approval?: number;
   completed: number;
   failed: number;
   cancelled: number;
@@ -218,12 +221,20 @@ export interface ModelOption {
   models: string[];
 }
 
+/** 语音识别（ASR）模型名称识别规则（前后端共用） */
+export const ASR_MODEL_RE = /whisper|asr|voice|audio|paraformer|sensevoice|funasr|speech/i;
+
 /** 非对话模型（向量/重排/语音等）识别规则：不该出现在「选模型」列表里 */
-export const NON_CHAT_MODEL_RE = /bge|reranker|embed|whisper|tts|vl/i;
+export const NON_CHAT_MODEL_RE = /bge|reranker|embed|whisper|asr|paraformer|sensevoice|funasr|tts|vl/i;
 
 /** 该模型 ID 是否可作为对话模型供任务使用 */
 export function isChatModel(modelId: string): boolean {
   return !NON_CHAT_MODEL_RE.test(modelId);
+}
+
+/** 该模型 ID 是否为语音识别（ASR）模型 */
+export function isAsrModel(modelId: string): boolean {
+  return ASR_MODEL_RE.test(modelId);
 }
 
 /** 平台技能（{agentDir}/skills/<name>/SKILL.md）。正文按需经 read_skill 工具加载（渐进披露）。 */
@@ -379,6 +390,9 @@ export interface ModelOverride {
 /** 专家级工具策略（P2-2）：工具名 → ask/deny；未提及 = 放行。支持 mcp:<连接器>:* 与 mcp:* 通配 */
 export type ToolPolicy = Record<string, "ask" | "deny">;
 
+/** 工具审批决定。allow_once 只放行当前这一次；allow_session 在本任务内记住该工具。 */
+export type ToolApprovalDecision = "allow_once" | "allow_session" | "deny";
+
 /** 技能来源的漂移检测信息（P2-4） */
 export interface SkillUpdateInfo {
   source: string;
@@ -398,13 +412,24 @@ export interface Deliverable {
   createdAt: string;
 }
 
-/** 任务会话中的一条消息（用户派发/追问、agent 的最终回复）。过程性输出（流式/工具）不走这里。 */
+/** Agent 单轮执行中的一条工具调用步骤摘要（随 assistant 消息持久化，供历史回看） */
+export interface TaskTurnStep {
+  tool: string;
+  detail?: string;
+  status?: "done" | "error";
+}
+
+/** 任务会话中的一条消息（用户派发/追问、agent 的最终回复及本轮思考/工具轨迹）。 */
 export interface TaskMessage {
   id: string;
   taskId: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  /** 本轮模型的思考摘要（若有） */
+  thinking?: string;
+  /** 本轮模型执行的工具调用步骤（若有） */
+  steps?: TaskTurnStep[];
 }
 
 export interface SendTaskMessageRequest {
@@ -419,6 +444,50 @@ export interface SlashSkill {
   description: string;
   /** 斜杠调用的参数提示（空 = 无参数） */
   argumentHint: string;
+}
+
+/**
+ * 定时与自动化巡检任务（ScheduledTask）：
+ * scheduleExpr 格式：
+ * - `daily:HH:mm`（每日固定时刻，如 `daily:09:00`）
+ * - `weekly:d:HH:mm`（每周固定星期与时刻，d=1..7 代表周一..周日，如 `weekly:1:09:00`）
+ * - `interval:N`（每隔 N 分钟，N >= 5，如 `interval:60`）
+ */
+export interface ScheduledTask {
+  id: string;
+  userId: string;
+  agentId: string;
+  agentName: string;
+  providerId: string;
+  modelId: string;
+  title: string;
+  prompt: string;
+  scheduleExpr: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastTaskId: string | null;
+  nextRunAt: string | null;
+  createdAt: string;
+}
+
+export interface CreateScheduledTaskRequest {
+  title?: string;
+  prompt: string;
+  agentId?: string;
+  providerId?: string;
+  modelId?: string;
+  scheduleExpr: string;
+  enabled?: boolean;
+}
+
+export interface UpdateScheduledTaskRequest {
+  title?: string;
+  prompt?: string;
+  agentId?: string;
+  providerId?: string;
+  modelId?: string;
+  scheduleExpr?: string;
+  enabled?: boolean;
 }
 
 /** SSE 事件封套：pi 原始事件原样透传（type + 载荷），任务生命周期事件由平台注入。 */

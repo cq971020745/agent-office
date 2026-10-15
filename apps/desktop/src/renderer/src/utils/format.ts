@@ -44,18 +44,21 @@ export function avatarGradient(name: string): string {
 }
 
 /** 按扩展名判断成果物预览方式 */
-export type PreviewKind = "html" | "image" | "text" | "download";
+export type PreviewKind = "html" | "image" | "pdf" | "audio" | "text" | "download";
 
 export function previewKind(filename: string): PreviewKind {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   if (ext === "html" || ext === "htm") return "html";
   if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(ext)) return "image";
+  if (ext === "pdf") return "pdf";
+  if (["mp3", "wav", "m4a", "ogg", "webm", "flac", "aac"].includes(ext)) return "audio";
   if (
     [
       "txt",
       "md",
       "json",
       "csv",
+      "tsv",
       "log",
       "xml",
       "yml",

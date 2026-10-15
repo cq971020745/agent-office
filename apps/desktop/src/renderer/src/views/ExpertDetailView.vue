@@ -156,8 +156,8 @@ watch(hasActive, (active) => {
           </div>
         </section>
 
-        <!-- 系统提示词 -->
-        <section class="card">
+        <!-- 系统提示词（仅管理员可见，D8 商业提示词保护） -->
+        <section v-if="agent.systemPrompt" class="card">
           <header class="card-head">
             <h3>
               <svg class="icon" viewBox="0 0 24 24">

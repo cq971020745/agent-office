@@ -13,9 +13,10 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerVoiceRoutes } from "./routes/voice.js";
 import { registerWpsRoutes, warmDirectoryCache } from "./routes/wps.js";
-import { installPiPackages } from "./packages.js";
+import { ensureExternalPiPackages, installPiPackages } from "./packages.js";
 import { registerLenientJsonParser } from "./json-body.js";
 import { startSessionSweeper, sweepOrphanTasks } from "./runner.js";
+import { registerScheduleRoutes, startScheduler } from "./scheduler.js";
 import { installSkillFromSource } from "./skill-install.js";
 import { ensureSeedSkills } from "./skills.js";
 
@@ -55,7 +56,14 @@ async function main(): Promise<void> {
   for (const id of piPackages.skipped) {
     console.warn(`[packages] 跳过 pi 插件包 ${id}：仓库内未找到包模板（PI_PACKAGES_DIR 未指向仓库根？）`);
   }
+  try {
+    await ensureExternalPiPackages();
+    console.log("[packages] pi-quiver doc_to_md 已就绪");
+  } catch (err) {
+    console.warn(`[packages] pi-quiver 安装失败，文档解析暂不可用：${err instanceof Error ? err.message : String(err)}`);
+  }
   startSessionSweeper();
+  startScheduler();
   warmDirectoryCache();
 
   const app = Fastify({ logger: true });
@@ -83,6 +91,7 @@ async function main(): Promise<void> {
   registerAuthRoutes(app);
   registerAdminRoutes(app);
   registerTaskRoutes(app);
+  registerScheduleRoutes(app);
   registerVoiceRoutes(app);
   registerWpsRoutes(app);
 
@@ -90,7 +99,7 @@ async function main(): Promise<void> {
   const webDist = process.env.WEB_DIST ?? path.resolve(process.cwd(), "../desktop/out/renderer");
   if (fs.existsSync(path.join(webDist, "index.html"))) {
     await app.register(fastifyStatic, { root: webDist });
-    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/skills", "/voice", "/wps"];
+    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/schedules", "/skills", "/voice", "/wps"];
     app.setNotFoundHandler((req, reply) => {
       const url = req.raw.url ?? "";
       // 裸 /admin 是管理页入口；管理 API 全部带子路径（/admin/providers 等）

@@ -4,7 +4,7 @@ import path from "node:path";
 import { isChatModel, type GeneratedAgent } from "@office/shared";
 import { db, now, uuid } from "../db.js";
 import { paths } from "../config.js";
-import { createUser, getUserById, requireAdmin, updatePassword } from "../auth.js";
+import { getUserById, requireAdmin, updatePassword } from "../auth.js";
 import {
   createSkill,
   deleteAgentSkillBinding,
@@ -49,6 +49,7 @@ interface ProviderRow {
   enabled_models: string;
   models_fetched_at: string | null;
   model_overrides: string;
+  asr_model: string;
 }
 
 function parseModels(raw: string | null | undefined): string[] {
@@ -71,6 +72,7 @@ function toProviderDto(row: ProviderRow) {
     enabledModels: parseModels(row.enabled_models),
     modelsFetchedAt: row.models_fetched_at,
     modelOverrides: parseModelOverrides(row.model_overrides),
+    asrModel: row.asr_model ?? "",
   };
 }
 
@@ -304,7 +306,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   app.get("/admin/providers", { onRequest: [app.authenticate], preHandler: requireAdmin }, async () => {
     const rows = db
       .prepare(
-        "SELECT id, name, base_url, api_key, enabled, models, enabled_models, models_fetched_at, model_overrides FROM model_providers ORDER BY created_at"
+        "SELECT id, name, base_url, api_key, enabled, models, enabled_models, models_fetched_at, model_overrides, asr_model FROM model_providers ORDER BY created_at"
       )
       .all() as unknown as ProviderRow[];
     return rows.map(toProviderDto);
@@ -360,6 +362,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       baseUrl?: string;
       apiKey?: string;
       modelOverrides?: unknown;
+      asrModel?: string;
     };
     const row = db.prepare("SELECT id FROM model_providers WHERE id = ?").get(id);
     if (!row) return reply.code(404).send({ error: "provider not found" });
@@ -385,6 +388,10 @@ export function registerAdminRoutes(app: FastifyInstance): void {
         JSON.stringify(sanitizeModelOverrides(body.modelOverrides)),
         id
       );
+    }
+    // 显式指定语音识别（ASR）模型（传空字符串则清除显式绑定）
+    if (body.asrModel !== undefined) {
+      db.prepare("UPDATE model_providers SET asr_model = ? WHERE id = ?").run(body.asrModel.trim(), id);
     }
     return reply.send({ ok: true });
   });
@@ -499,15 +506,6 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       return { models, enabledModels };
     }
   );
-
-  app.post("/admin/users", { onRequest: [app.authenticate], preHandler: requireAdmin }, async (req, reply) => {
-    const body = req.body as { username?: string; password?: string; role?: "admin" | "member" };
-    if (!body.username || !body.password) {
-      return reply.code(400).send({ error: "username and password are required" });
-    }
-    const user = createUser(body.username, body.password, body.role === "admin" ? "admin" : "member");
-    return reply.code(201).send({ id: user.id, username: user.username, role: user.role });
-  });
 
   app.get("/admin/users", { onRequest: [app.authenticate], preHandler: requireAdmin }, async () => {
     return db

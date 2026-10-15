@@ -1,18 +1,41 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { login, register, setToken, setUsername } from "../api";
+import { login, register, resetPassword, setToken, setUsername } from "../api";
 
 const router = useRouter();
-const mode = ref<"login" | "register">("login");
+type AuthMode = "login" | "register" | "reset";
+const mode = ref<AuthMode>("login");
 const username = ref("");
 const password = ref("");
+const passwordConfirm = ref("");
 const error = ref("");
 const busy = ref(false);
 
+const titles: Record<AuthMode, string> = {
+  login: "欢迎回来",
+  register: "创建个人账号",
+  reset: "重置密码",
+};
+const subtitles: Record<AuthMode, string> = {
+  login: "登录以继续使用",
+  register: "注册后可同步自己的 WPS 365 用户信息",
+  reset: "忘记密码时，在本机为已有账号设置新密码",
+};
+
 async function submit(): Promise<void> {
-  if (!username.value.trim() || !password.value) {
-    error.value = "请输入用户名和密码";
+  const name = username.value.trim();
+  const settingNewPassword = mode.value === "register" || mode.value === "reset";
+  if (!name || !password.value) {
+    error.value = settingNewPassword && mode.value === "reset" ? "请输入用户名和新密码" : "请输入用户名和密码";
+    return;
+  }
+  if (settingNewPassword && password.value.length < 6) {
+    error.value = "密码至少 6 位";
+    return;
+  }
+  if (settingNewPassword && password.value !== passwordConfirm.value) {
+    error.value = "两次输入的密码不一致";
     return;
   }
   busy.value = true;
@@ -20,10 +43,12 @@ async function submit(): Promise<void> {
   try {
     const res =
       mode.value === "login"
-        ? await login(username.value.trim(), password.value)
-        : await register(username.value.trim(), password.value);
+        ? await login(name, password.value)
+        : mode.value === "register"
+          ? await register(name, password.value)
+          : await resetPassword(name, password.value);
     setToken(res.token);
-    setUsername(username.value.trim());
+    setUsername(res.user.username);
     void router.push("/");
   } catch (err) {
     error.value = authErrorMessage(err);
@@ -32,11 +57,23 @@ async function submit(): Promise<void> {
   }
 }
 
+function switchMode(next: AuthMode): void {
+  mode.value = next;
+  password.value = "";
+  passwordConfirm.value = "";
+  error.value = "";
+}
+
 // 服务端返回的是英文错误码，映射成中文提示
 function authErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     if (err.message === "username taken") return "该用户名已被注册，请直接登录";
     if (err.message === "invalid credentials") return "用户名或密码错误";
+    if (err.message === "password must be at least 6 characters") return "密码至少 6 位";
+    if (err.message === "user not found") return "没有这个用户名，请先注册";
+    if (err.message === "password reset is only available on this computer") {
+      return "只能在运行服务的这台电脑上重置密码";
+    }
     if (/failed to fetch|networkerror|load failed/i.test(err.message)) {
       return "无法连接服务器，请确认服务已启动";
     }
@@ -78,22 +115,40 @@ const FEATURES = [
 
     <main class="form-panel">
       <form class="box" @submit.prevent="submit">
-        <h2>{{ mode === "register" ? "创建管理员账号" : "欢迎回来" }}</h2>
-        <p class="sub">{{ mode === "register" ? "首次注册的用户将成为管理员" : "登录以继续使用" }}</p>
+        <h2>{{ titles[mode] }}</h2>
+        <p class="sub">{{ subtitles[mode] }}</p>
         <label>
           <span>用户名</span>
           <input v-model="username" placeholder="用户名" autocomplete="username" />
         </label>
-        <label>
-          <span>密码</span>
-          <input v-model="password" type="password" placeholder="密码" autocomplete="current-password" />
+        <div class="field">
+          <div class="field-head">
+            <span>{{ mode === "login" ? "密码" : "新密码" }}</span>
+            <button v-if="mode === 'login'" type="button" class="forgot" @click="switchMode('reset')">忘记密码？</button>
+          </div>
+          <input
+            v-model="password"
+            type="password"
+            :placeholder="mode === 'login' ? '密码' : '至少 6 位'"
+            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+            :minlength="mode === 'login' ? undefined : 6"
+          />
+        </div>
+        <label v-if="mode !== 'login'">
+          <span>确认密码</span>
+          <input
+            v-model="passwordConfirm"
+            type="password"
+            placeholder="再次输入密码"
+            autocomplete="new-password"
+            minlength="6"
+          />
         </label>
         <button class="primary" type="submit" :disabled="busy">
-          {{ mode === "login" ? "登 录" : "注册并登录" }}
+          {{ mode === "login" ? "登 录" : mode === "register" ? "注册并登录" : "重置并登录" }}
         </button>
-        <button type="button" class="link" @click="mode = mode === 'login' ? 'register' : 'login'">
-          {{ mode === "login" ? "首次使用？注册管理员账号" : "已有账号？去登录" }}
-        </button>
+        <button v-if="mode === 'login'" type="button" class="link" @click="switchMode('register')">没有账号？立即注册</button>
+        <button v-else type="button" class="link" @click="switchMode('login')">已有账号？去登录</button>
         <p v-if="error" class="error">{{ error }}</p>
       </form>
     </main>
@@ -233,15 +288,35 @@ const FEATURES = [
   color: var(--text-2);
   font-size: 13px;
 }
-label {
+label,
+.field {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-label span {
+label span,
+.field-head span {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-2);
+}
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.forgot {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: none;
+}
+.forgot:hover {
+  color: var(--accent-strong);
 }
 .error {
   margin: 0;

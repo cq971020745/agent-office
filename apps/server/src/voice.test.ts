@@ -1,4 +1,4 @@
-// voice.test.ts：语音转写的候选推导与转发请求（callTranscription 打本地 http 桩）。
+// voice.test.ts：语音转写的严格显式候选规则、WAV 内存解析与转发请求单测。
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
@@ -8,28 +8,86 @@ import { after, before, describe, it } from "node:test";
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "office-voice-test-"));
 
-const { callTranscription, pickTranscribeCandidates } = await import("./routes/voice.js");
+const { callTranscription, parseWavBuffer, pickTranscribeCandidates } = await import("./routes/voice.js");
 
-describe("pickTranscribeCandidates", () => {
-  it("优先列出名字命中 ASR 的启用模型", () => {
+describe("pickTranscribeCandidates（严格显式配置模式）", () => {
+  it("未显式绑定 asr_model 的供应商绝不自动猜测或盲选列表模型", () => {
     const out = pickTranscribeCandidates([
-      { id: "p1", name: "紫金", base_url: "https://x/v4", api_key: "k", enabled_models: JSON.stringify(["glm-5.3", "glm-asr", "whisper-large"]) },
+      {
+        id: "p1",
+        name: "集团模型",
+        base_url: "http://10.50.11.18:8080/v1",
+        api_key: "k",
+        enabled_models: JSON.stringify(["bge-m3", "GLM-5.3-Flash", "Qwen3.8-27B"]),
+        models: JSON.stringify(["bge-m3", "GLM-5.3-Flash", "Qwen3.8-27B", "whisper-large"]),
+      },
     ]);
-    assert.deepEqual(
-      out.map((c) => `${c.providerId}/${c.model}`),
-      ["p1/glm-asr", "p1/whisper-large"]
-    );
+    assert.deepEqual(out, []);
   });
 
-  it("未配置 ASR 模型时补常见默认名；base_url 缺失的供应商跳过", () => {
+  it("仅返回管理员显式绑定了 asr_model 且有 base_url 的供应商", () => {
     const out = pickTranscribeCandidates([
-      { id: "p1", name: "紫金", base_url: "https://x/v4", api_key: "k", enabled_models: JSON.stringify(["glm-5.3"]) },
-      { id: "p2", name: "空地址", base_url: "", api_key: "k", enabled_models: JSON.stringify(["glm-asr"]) },
+      {
+        id: "p1",
+        name: "未绑定语音供应商",
+        base_url: "https://a/v1",
+        api_key: "k1",
+        enabled_models: JSON.stringify(["deepseek-chat"]),
+      },
+      {
+        id: "p2",
+        name: "显式绑定语音供应商",
+        base_url: "https://b/v1",
+        api_key: "k2",
+        enabled_models: JSON.stringify(["gpt-4o"]),
+        asr_model: "FunAudioLLM/SenseVoiceSmall",
+      },
+      {
+        id: "p3",
+        name: "空地址供应商",
+        base_url: "",
+        api_key: "k3",
+        enabled_models: "[]",
+        asr_model: "whisper-1",
+      },
     ]);
     assert.deepEqual(
       out.map((c) => `${c.providerId}/${c.model}`),
-      ["p1/glm-asr", "p1/whisper-1"]
+      ["p2/FunAudioLLM/SenseVoiceSmall"]
     );
+    assert.equal(out[0]?.explicit, true);
+  });
+});
+
+describe("parseWavBuffer", () => {
+  it("正确解析 16kHz 16-bit PCM 单声道 WAV 头与采样", () => {
+    const buf = Buffer.alloc(44 + 4);
+    buf.write("RIFF", 0, "ascii");
+    buf.writeUInt32LE(36 + 4, 4);
+    buf.write("WAVE", 8, "ascii");
+    buf.write("fmt ", 12, "ascii");
+    buf.writeUInt32LE(16, 16);
+    buf.writeUInt16LE(1, 20); // PCM
+    buf.writeUInt16LE(1, 22); // mono
+    buf.writeUInt32LE(16000, 24);
+    buf.writeUInt32LE(32000, 28);
+    buf.writeUInt16LE(2, 32);
+    buf.writeUInt16LE(16, 34);
+    buf.write("data", 36, "ascii");
+    buf.writeUInt32LE(4, 40);
+    buf.writeInt16LE(16384, 44);
+    buf.writeInt16LE(-16384, 46);
+
+    const parsed = parseWavBuffer(buf);
+    assert.ok(parsed);
+    assert.equal(parsed.sampleRate, 16000);
+    assert.equal(parsed.samples.length, 2);
+    assert.equal(parsed.samples[0], 0.5);
+    assert.equal(parsed.samples[1], -0.5);
+  });
+
+  it("非 WAV 数据返回 null", () => {
+    assert.equal(parseWavBuffer(Buffer.from("not-a-wav")), null);
   });
 });
 
@@ -64,21 +122,21 @@ describe("callTranscription", () => {
 
   it("携带 Bearer 与模型名转发，返回去空白的文本", async () => {
     const text = await callTranscription(
-      { providerId: "p1", providerName: "紫金", baseUrl: `${url}/`, apiKey: "sk-test", model: "glm-asr" },
+      { providerId: "p1", providerName: "紫金", baseUrl: `${url}/`, apiKey: "sk-test", model: "whisper-1", explicit: true },
       Buffer.from("RIFF"),
       "speech.wav",
       "audio/wav"
     );
     assert.equal(text, "你好，世界");
     assert.equal(seen.auth, "Bearer sk-test");
-    assert.equal(seen.model, "glm-asr");
+    assert.equal(seen.model, "whisper-1");
     assert.match(seen.contentType, /^multipart\/form-data/);
   });
 
-  it("非 2xx 抛错（上层换下一个候选）", async () => {
+  it("非 2xx 抛错（上层换下一个候选或走本地开源模型兜底）", async () => {
     await assert.rejects(
       callTranscription(
-        { providerId: "p1", providerName: "紫金", baseUrl: `${url}/no-such-prefix`, apiKey: "sk-test", model: "glm-asr" },
+        { providerId: "p1", providerName: "紫金", baseUrl: `${url}/no-such-prefix`, apiKey: "sk-test", model: "whisper-1", explicit: true },
         Buffer.from("x"),
         "speech.wav",
         "audio/wav"

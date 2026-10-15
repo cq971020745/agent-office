@@ -8,7 +8,7 @@ import { paths } from "../config.js";
 import { db, now, uuid } from "../db.js";
 import { attachSse, clearTask, publishStatus } from "../sse.js";
 import { approveTask, cancelTask, dropTask, sendMessage, startTask, waitTaskIdle } from "../runner.js";
-import { resolveToolApproval } from "../tool-approval.js";
+import { listSessionGrants, parseToolDecision, resolveToolApproval, revokeSessionGrant } from "../tool-approval.js";
 import { listSkills } from "../skills.js";
 import { getAgentSkillBinding } from "../skills.js";
 import { moveFile, stageMultipartFiles, uniqueTargetPath, attachmentNote, type StagedUpload } from "../uploads.js";
@@ -124,6 +124,7 @@ function rollbackUploads(taskId: string, workspace: string, relPaths: string[]):
 /** 状态筛选桶：进行中含排队（pending），与客户端口径一致 */
 const STATUS_FILTERS: Record<string, string[]> = {
   running: ["pending", "running"],
+  awaiting_approval: ["awaiting_approval"],
   completed: ["completed"],
   failed: ["failed"],
   cancelled: ["cancelled"],
@@ -219,9 +220,10 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     }));
   });
 
-  // 专家详情：完整配置（含系统提示词），登录用户可见
+  // 专家详情：配置详情（D8：系统提示词仅向管理员返回，防止导入的商业提示词向普通成员泄露）
   app.get("/agents/:id", { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
+    const user = currentUser(req);
     const r = db
       .prepare(
         `SELECT a.id, a.name, a.description, a.system_prompt AS systemPrompt, a.provider_id AS providerId,
@@ -248,7 +250,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       id: r.id,
       name: r.name,
       description: r.description,
-      systemPrompt: r.systemPrompt,
+      ...(user.role === "admin" ? { systemPrompt: r.systemPrompt } : {}),
       providerId: r.providerId ?? "",
       providerName: r.provider_name ?? "",
       modelId: r.modelId ?? "",
@@ -444,7 +446,14 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     const countRows = db
       .prepare(`SELECT t.status AS status, COUNT(*) AS n FROM tasks t ${scope.whereSql} GROUP BY t.status`)
       .all(...scope.args) as unknown as { status: TaskStatus; n: number }[];
-    const counts: Record<string, number> = { all: 0, running: 0, completed: 0, failed: 0, cancelled: 0 };
+    const counts: Record<string, number> = {
+      all: 0,
+      running: 0,
+      awaiting_approval: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    };
     for (const r of countRows) {
       counts.all += r.n;
       if (r.status === "pending" || r.status === "running") counts.running += r.n;
@@ -458,6 +467,17 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     const row = getTaskRow(id);
     if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
     return toTaskDto(row);
+  });
+
+  app.patch("/tasks/:id", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const body = req.body as { title?: string };
+    const title = body?.title?.trim();
+    if (!title) return reply.code(400).send({ error: "title is required" });
+    db.prepare("UPDATE tasks SET title = ? WHERE id = ?").run(title.slice(0, 80), id);
+    return reply.send({ ok: true, title: title.slice(0, 80) });
   });
 
   // 高风险审批：用户逐项确认执行清单后放行；reject=true 则直接取消任务
@@ -483,14 +503,32 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     return reply.code(202).send({ ok: true });
   });
 
-  // ask 级工具调用审批（P2-2）：approve/deny 一次调用；等待中的请求由 runner 落定
+  // ask 级工具调用审批：拒绝 / 仅本次允许 / 本会话允许。旧客户端的 approved 布尔值仍可用。
   app.post("/tasks/:id/tool-approval", { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const row = getTaskRow(id);
     if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
-    const body = req.body as { approved?: boolean };
-    const ok = resolveToolApproval(id, body.approved === true);
+    const decision = parseToolDecision((req.body ?? {}) as { decision?: unknown; approved?: unknown });
+    if (!decision) return reply.code(400).send({ error: "decision 须为 allow_once、allow_session 或 deny" });
+    const ok = resolveToolApproval(id, decision);
     if (!ok) return reply.code(409).send({ error: "该任务当前没有等待审批的工具调用" });
+    return reply.send({ ok: true });
+  });
+
+  app.get("/tasks/:id/session-grants", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    return reply.send({ tools: listSessionGrants(id) });
+  });
+
+  app.delete("/tasks/:id/session-grants/:tool", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id, tool } = req.params as { id: string; tool: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const toolName = decodeURIComponent(tool);
+    if (!/^[\w:.*-]+$/.test(toolName)) return reply.code(400).send({ error: "非法工具名" });
+    if (!revokeSessionGrant(id, toolName)) return reply.code(404).send({ error: "该工具没有会话授权" });
     return reply.send({ ok: true });
   });
 
@@ -532,6 +570,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     db.prepare("DELETE FROM deliverables WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM task_uploads WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM task_messages WHERE task_id = ?").run(id);
+    db.prepare("DELETE FROM task_session_grants WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
 
     // 平台隔离工作区目录位于 data/workspaces 下时才删除（防误删路径之外的内容）
@@ -553,15 +592,36 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     return reply.send({ ok: true });
   });
 
-  // 多轮对话：任务级消息（用户派发/追问 + agent 最终回复）
+  // 多轮对话：任务级消息（用户派发/追问 + agent 最终回复 + 本轮思考/工具轨迹元数据）
   app.get("/tasks/:id/messages", { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const row = getTaskRow(id);
     if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
     const rows = db
-      .prepare("SELECT id, task_id, role, content, created_at FROM task_messages WHERE task_id = ? ORDER BY created_at, rowid")
-      .all(id) as unknown as { id: string; task_id: string; role: string; content: string; created_at: string }[];
-    return rows.map((m) => ({ id: m.id, taskId: m.task_id, role: m.role, content: m.content, createdAt: m.created_at }));
+      .prepare("SELECT id, task_id, role, content, meta, created_at FROM task_messages WHERE task_id = ? ORDER BY created_at, rowid")
+      .all(id) as unknown as { id: string; task_id: string; role: string; content: string; meta: string | null; created_at: string }[];
+    return rows.map((m) => {
+      let thinking: string | undefined;
+      let steps: { tool: string; detail?: string; status?: "done" | "error" }[] | undefined;
+      if (m.meta) {
+        try {
+          const parsed = JSON.parse(m.meta) as { thinking?: unknown; steps?: unknown };
+          if (typeof parsed.thinking === "string" && parsed.thinking.trim()) thinking = parsed.thinking;
+          if (Array.isArray(parsed.steps) && parsed.steps.length) steps = parsed.steps;
+        } catch {
+          // 忽略坏 JSON
+        }
+      }
+      return {
+        id: m.id,
+        taskId: m.task_id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        createdAt: m.created_at,
+        ...(thinking ? { thinking } : {}),
+        ...(steps ? { steps } : {}),
+      };
+    });
   });
 
   // 多轮追问：纯 JSON 或 multipart（带附件）。附件在确认本轮可执行后落进任务工作区，

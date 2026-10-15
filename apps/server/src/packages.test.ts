@@ -8,6 +8,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "office-packages-test-"));
+process.env.PI_OFFLINE = "1";
 
 const { declarePiPackage, findPackageSourceDir, installPiPackages, isPackageSynced } = await import("./packages.js");
 const { paths } = await import("./config.js");
@@ -72,12 +73,18 @@ describe("installPiPackages", () => {
     assert.equal(isPackageSynced(findPackageSourceDir("office-suite", process.cwd())!, dest), true);
 
     const settings = JSON.parse(fs.readFileSync(path.join(paths.agentDir, "settings.json"), "utf8"));
-    assert.deepEqual(settings.packages, [{ source: "./packages/office-suite" }]);
+    const sources = settings.packages.map((pkg: { source: string }) => pkg.source).sort();
+    assert.deepEqual(sources, ["./packages/office-suite", "npm:pi-quiver@6.13.2"]);
+    const quiver = settings.packages.find((pkg: { source: string }) => pkg.source.startsWith("npm:pi-quiver"));
+    assert.deepEqual(quiver.extensions, ["extensions/doc_to_md.ts"]);
+    assert.deepEqual(quiver.skills, []);
+    assert.deepEqual(quiver.prompts, []);
+    assert.deepEqual(quiver.themes, []);
 
     const again = installPiPackages();
     assert.equal(again.installed[0]!.alreadySynced, true);
     const settingsAgain = JSON.parse(fs.readFileSync(path.join(paths.agentDir, "settings.json"), "utf8"));
-    assert.equal(settingsAgain.packages.length, 1, "重复安装不应产生重复声明");
+    assert.equal(settingsAgain.packages.length, 2, "重复安装不应产生重复声明");
   });
 
   it("目标被篡改后重装可修复", () => {

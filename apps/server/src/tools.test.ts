@@ -82,6 +82,33 @@ describe("workspaceTools", () => {
     await assert.rejects(() => call("workspace_read", { path: "../../etc/passwd" }), /escapes/);
   });
 
+  it("workspace_read 拒绝二进制并把 OLE2 伪 docx 复制成隐藏 doc", async () => {
+    const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00]);
+    fs.writeFileSync(path.join(root, "合同.docx"), ole);
+    const res = await call("workspace_read", { path: "合同.docx" });
+    const text = (res.content[0] as { text: string }).text;
+    assert.match(text, /doc_to_md/);
+    assert.match(text, /\.parsed\/合同\.doc/);
+    assert.ok(fs.existsSync(path.join(root, ".parsed", "合同.doc")));
+    assert.ok(!text.includes("\uFFFD") && !text.includes("D0CF"), "不应把二进制当文本吐出");
+    assert.equal(fs.readFileSync(path.join(root, "合同.docx")).equals(ole), true);
+  });
+
+  it("workspace_edit 精确局部替换并拒绝未命中的 oldText", async () => {
+    await call("workspace_write", { path: "doc.md", content: "第一段\n旧内容\n第三段" });
+    const res = await call("workspace_edit", { path: "doc.md", oldText: "旧内容", newText: "新内容" });
+    assert.match((res.content[0] as { text: string }).text, /edited doc\.md/);
+    assert.equal(fs.readFileSync(path.join(root, "doc.md"), "utf8"), "第一段\n新内容\n第三段");
+    await assert.rejects(
+      () => call("workspace_edit", { path: "doc.md", oldText: "不存在的片段", newText: "x" }),
+      /oldText not found/
+    );
+  });
+
+  it("transcribe_audio 拒绝非音频后缀文件", async () => {
+    await assert.rejects(() => call("transcribe_audio", { path: "doc.md" }), /unsupported audio extension/);
+  });
+
   it("fetch_url 拒绝非 http(s) 协议", async () => {
     await assert.rejects(() => call("fetch_url", { url: "file:///etc/passwd" }), /only http\(s\) URLs are allowed/);
     await assert.rejects(() => call("fetch_url", { url: "ftp://example.com/x" }), /only http\(s\) URLs are allowed/);

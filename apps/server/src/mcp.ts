@@ -22,6 +22,48 @@ export interface McpToolInfo {
   inputSchema?: Record<string, unknown> | null;
 }
 
+const SAFE_ENV_KEYS = [
+  "PATH",
+  "Path",
+  "PATHEXT",
+  "SystemRoot",
+  "SYSTEMROOT",
+  "WINDIR",
+  "ComSpec",
+  "COMSPEC",
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "PROGRAMDATA",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "NODE_ENV",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+];
+
+/** 构建传给 MCP 子进程的最小安全环境变量（剥离服务端 JWT_SECRET 等敏感环境，仅保留系统运行必需项 + 管理员显式配置的 env） */
+export function buildSafeMcpEnv(customEnv: Record<string, string>, baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const k of SAFE_ENV_KEYS) {
+    if (baseEnv[k] !== undefined) out[k] = baseEnv[k];
+  }
+  for (const [k, v] of Object.entries(customEnv)) {
+    out[k] = v;
+  }
+  return out;
+}
+
 export class McpClient {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
@@ -38,7 +80,7 @@ export class McpClient {
   ) {}
 
   private spawnProc(): ChildProcessWithoutNullStreams {
-    const env = { ...process.env, ...this.env } as NodeJS.ProcessEnv;
+    const env = buildSafeMcpEnv(this.env);
     // Windows 下 npx/uvx 等是 .cmd，需要 shell；含空格的参数自行加引号
     const shell = process.platform === "win32";
     const safeArgs = shell ? this.args.map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)) : this.args;

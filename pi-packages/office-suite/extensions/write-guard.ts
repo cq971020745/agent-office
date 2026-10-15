@@ -3,13 +3,14 @@
  *
  * 无 UI 依赖，全部自动拒绝并返回模型可读 reason（无头 SDK 会话可用）：
  * - workspace_write：拦截关键文件覆盖（.env / .git / node_modules）
- * - run_code：拦截明显破坏性的脚本片段——容器隔离了宿主机，但容器内的
- *   递归删除仍会毁掉挂载的任务产出，导致整个任务作废。
+ * - run_code / terminal：拦截明显破坏性命令。terminal 跑在宿主机上，
+ *   这条护栏是审批之外的最后一道兜底。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const PROTECTED_PATH_PATTERNS = [".env", ".git/", "node_modules/"];
 
+// 与 apps/server/src/host-terminal.ts 的 dangerousCommandReason 保持同一组规则。
 const DANGEROUS_CODE_PATTERNS: Array<{ re: RegExp; why: string }> = [
 	{ re: /rm\s+(?:-{1,2}[a-zA-Z-]+\s+)*-{1,2}[a-zA-Z]*r[a-zA-Z]*f?[a-zA-Z]*\s+(?:\/|~|\$HOME)(?:\s|\/\*|$)/, why: "递归删除根/家目录" },
 	{ re: /--no-preserve-root/, why: "绕过根目录删除保护" },
@@ -22,6 +23,13 @@ const DANGEROUS_CODE_PATTERNS: Array<{ re: RegExp; why: string }> = [
 	{ re: /\bformat\s+[a-zA-Z]:/i, why: "格式化磁盘" },
 	{ re: /(?:curl|wget)[^;\n|]*\|\s*(?:sudo\s+)?(?:ba)?sh\b/, why: "下载并直接执行远程脚本" },
 ];
+
+export function dangerousCommandReason(command: string): string | undefined {
+	for (const { re, why } of DANGEROUS_CODE_PATTERNS) {
+		if (re.test(command)) return why;
+	}
+	return undefined;
+}
 
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event) => {
@@ -36,15 +44,14 @@ export default function (pi: ExtensionAPI) {
 			return undefined;
 		}
 
-		if (event.toolName === "run_code") {
-			const code = String(event.input.code ?? "");
-			for (const { re, why } of DANGEROUS_CODE_PATTERNS) {
-				if (re.test(code)) {
-					return {
-						block: true,
-						reason: `脚本包含破坏性操作（${why}），已被平台护栏拦截。请修改脚本后重试。`,
-					};
-				}
+		if (event.toolName === "run_code" || event.toolName === "terminal") {
+			const text = String(event.toolName === "terminal" ? event.input.command ?? "" : event.input.code ?? "");
+			const why = dangerousCommandReason(text);
+			if (why) {
+				return {
+					block: true,
+					reason: `命令包含破坏性操作（${why}），已被平台护栏拦截。请修改后重试。`,
+				};
 			}
 			return undefined;
 		}

@@ -12,7 +12,7 @@ process.env.DATA_DIR = dataDir;
 const { migrate } = await import("./db.js");
 migrate();
 const { parseModelOverrides, sanitizeModelOverrides, resolveModelCaps, MODEL_DEFAULTS } = await import("./model-caps.js");
-const { parseToolPolicy, sanitizeToolPolicy, policyFor } = await import("./tool-policy.js");
+const { parseToolPolicy, sanitizeToolPolicy, policyFor, toolNeedsApproval } = await import("./tool-policy.js");
 const { readAgentsMd, writeAgentsMd, AGENTS_MD_MAX_CHARS } = await import("./instructions.js");
 const { McpHttpClient, expandHeaderEnv } = await import("./mcp.js");
 const { installSkillFromSource, syncSkill, getSourceInfo, listSkillUpdates, removeSkillSource } = await import("./skill-install.js");
@@ -78,6 +78,16 @@ describe("P2-2 工具策略", () => {
     assert.equal(policyFor(policy, "mcp_GitHub__create_issue"), "ask");
     assert.equal(policyFor(policy, "mcp_other_tool"), "deny"); // 全局 MCP 通配
     assert.equal(policyFor(policy, "read_skill"), undefined); // 非 MCP 工具不吃 mcp:* 通配
+  });
+
+  it("toolNeedsApproval：专家 deny 优先，会话授权跳过 ask，terminal 默认询问", () => {
+    const policy = sanitizeToolPolicy({ workspace_write: "ask", terminal: "deny", fetch_url: "ask" });
+    assert.equal(toolNeedsApproval(policy, "terminal", false), false);
+    assert.equal(toolNeedsApproval(policy, "workspace_write", false), true);
+    assert.equal(toolNeedsApproval(policy, "workspace_write", true), false);
+    assert.equal(toolNeedsApproval({}, "terminal", false), true);
+    assert.equal(toolNeedsApproval({}, "terminal", true), false);
+    assert.equal(toolNeedsApproval({}, "workspace_read", false), false);
   });
 });
 

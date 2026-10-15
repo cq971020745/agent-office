@@ -1,5 +1,40 @@
-import { db } from "./db.js";
+import { db, now } from "./db.js";
 import { publishPi, publishStatus, publishUser } from "./sse.js";
+
+/** 审批决定：仅本次放行、本会话放行、拒绝。旧客户端只传 approved 布尔值。 */
+export type ToolApprovalDecision = "allow_once" | "allow_session" | "deny";
+
+export function parseToolDecision(body: { decision?: unknown; approved?: unknown }): ToolApprovalDecision | undefined {
+  if (body.decision === "allow_once" || body.decision === "allow_session" || body.decision === "deny") {
+    return body.decision;
+  }
+  if (body.approved === true) return "allow_once";
+  if (body.approved === false) return "deny";
+  return undefined;
+}
+
+export function listSessionGrants(taskId: string): string[] {
+  const rows = db
+    .prepare("SELECT tool_name FROM task_session_grants WHERE task_id = ? ORDER BY created_at, tool_name")
+    .all(taskId) as { tool_name: string }[];
+  return rows.map((row) => row.tool_name);
+}
+
+export function hasSessionGrant(taskId: string, toolName: string): boolean {
+  const row = db.prepare("SELECT 1 AS ok FROM task_session_grants WHERE task_id = ? AND tool_name = ?").get(taskId, toolName);
+  return !!row;
+}
+
+export function grantSessionTool(taskId: string, toolName: string): void {
+  db.prepare(
+    "INSERT INTO task_session_grants (task_id, tool_name, created_at) VALUES (?, ?, ?) ON CONFLICT(task_id, tool_name) DO NOTHING"
+  ).run(taskId, toolName, now());
+}
+
+export function revokeSessionGrant(taskId: string, toolName: string): boolean {
+  const info = db.prepare("DELETE FROM task_session_grants WHERE task_id = ? AND tool_name = ?").run(taskId, toolName);
+  return info.changes > 0;
+}
 
 /**
  * ask 级工具调用的审批等待（P2-2）：工具执行前暂停，向该任务的 SSE 流发布审批请求，
@@ -51,11 +86,15 @@ export function requestToolApproval(taskId: string, tool: string, input: unknown
   });
 }
 
-/** 界面审批落点：存在待审批则落定并返回 true，否则 false（调用方回 404/409）。 */
-export function resolveToolApproval(taskId: string, approved: boolean): boolean {
+/**
+ * 界面审批落点：存在待审批则落定并返回 true，否则 false（调用方回 409）。
+ * allow_session 先写入任务授权，同一会话里后续同名工具不再询问。
+ */
+export function resolveToolApproval(taskId: string, decision: ToolApprovalDecision): boolean {
   const entry = pending.get(taskId);
   if (!entry) return false;
-  entry.finish(approved);
+  if (decision === "allow_session") grantSessionTool(taskId, entry.tool);
+  entry.finish(decision !== "deny");
   return true;
 }
 

@@ -61,6 +61,29 @@ export function useAttachments() {
     addFiles(Array.from(e.dataTransfer?.files ?? []));
   }
 
+  /** 支持 Ctrl+V 直接粘贴剪贴板中的截图或文件作为任务附件 */
+  function onPaste(e: ClipboardEvent): void {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const files: File[] = [];
+    for (const item of items) {
+      if (item.kind !== "file") continue;
+      const f = item.getAsFile();
+      if (!f) continue;
+      // 剪贴板直接截图通常命名为 image.png，附加上时间戳避免多次截图同名去重被跳过
+      if (/^image\.(png|jpe?g|webp|gif)$/i.test(f.name)) {
+        const ext = f.name.split(".").pop() || "png";
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(11, 19);
+        files.push(new File([f], `screenshot-${stamp}.${ext}`, { type: f.type }));
+      } else {
+        files.push(f);
+      }
+    }
+    if (files.length) {
+      addFiles(files);
+      toast("success", `已从剪贴板添加 ${files.length} 个附件`);
+    }
+  }
+
   return {
     attachments,
     fileInput,
@@ -73,5 +96,6 @@ export function useAttachments() {
     onDragEnter,
     onDragLeave,
     onDrop,
+    onPaste,
   };
 }

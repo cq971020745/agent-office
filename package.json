@@ -18,6 +18,10 @@
       "better-sqlite3",
       "esbuild",
       "electron"
+    ],
+    "ignoredBuiltDependencies": [
+      "onnxruntime-node",
+      "sharp"
     ]
   }
 }

@@ -18,9 +18,11 @@
     "@fastify/jwt": "10.2.2",
     "@fastify/multipart": "^9.4.0",
     "@fastify/static": "10.1.4",
+    "@huggingface/transformers": "4.3.1",
     "@office/shared": "workspace:*",
     "better-sqlite3": "13.0.3",
-    "fastify": "5.12.5"
+    "fastify": "5.12.5",
+    "sherpa-onnx-node": "1.13.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",

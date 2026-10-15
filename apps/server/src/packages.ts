@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { paths } from "./config.js";
 
 /**
@@ -16,6 +17,28 @@ import { paths } from "./config.js";
 const BUILTIN_PACKAGES: ReadonlyArray<{ id: string; dirName: string }> = [
   { id: "office-suite", dirName: "office-suite" },
 ];
+
+/**
+ * 外部 Pi 包。pi-quiver 只启用 doc_to_md，避免把它的 fetch、Slack、会话装饰一并加载。
+ * 版本钉死：该版本兼容当前 Node 22，并覆盖 PDF / DOCX / 旧版 DOC / PPTX / XLSX。
+ */
+const EXTERNAL_PACKAGES: readonly PiPackageDeclaration[] = [
+  {
+    source: "npm:pi-quiver@6.13.2",
+    extensions: ["extensions/doc_to_md.ts"],
+    skills: [],
+    prompts: [],
+    themes: [],
+  },
+];
+
+export interface PiPackageDeclaration {
+  source: string;
+  extensions?: string[];
+  skills?: string[];
+  prompts?: string[];
+  themes?: string[];
+}
 
 /** 定位仓库内的包模板目录；优先环境变量，其次按 cwd 与模块位置探测。 */
 export function findPackageSourceDir(dirName: string, cwd: string = process.cwd()): string | undefined {
@@ -58,23 +81,42 @@ export function isPackageSynced(source: string, dest: string): boolean {
   return true;
 }
 
-/** 把声明合并进 settings.json 的 packages 数组；文件缺失/损坏时重建，其余字段保留。 */
-export function declarePiPackage(settingsPath: string, source: string): void {
+function declarationRecord(spec: string | PiPackageDeclaration): Record<string, unknown> {
+  if (typeof spec === "string") return { source: spec };
+  const record: Record<string, unknown> = { source: spec.source };
+  if (spec.extensions) record.extensions = spec.extensions;
+  if (spec.skills) record.skills = spec.skills;
+  if (spec.prompts) record.prompts = spec.prompts;
+  if (spec.themes) record.themes = spec.themes;
+  return record;
+}
+
+/** 把声明合并进 settings.json 的 packages 数组；同 source 会更新过滤字段，其余字段保留。 */
+export function declarePiPackage(settingsPath: string, spec: string | PiPackageDeclaration): void {
   let settings: { packages?: Array<Record<string, unknown>>; [key: string]: unknown } = {};
+  let rawExisting = "";
   if (fs.existsSync(settingsPath)) {
     try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as typeof settings;
+      rawExisting = fs.readFileSync(settingsPath, "utf8");
+      settings = JSON.parse(rawExisting) as typeof settings;
     } catch {
       settings = {};
     }
   }
   const packages = Array.isArray(settings.packages) ? settings.packages : [];
-  if (!packages.some((p) => p && p.source === source)) {
-    packages.push({ source });
-  }
+  const next = declarationRecord(spec);
+  const existing = packages.find((pkg) => pkg && pkg.source === next.source);
+  if (existing) Object.assign(existing, next);
+  else packages.push(next);
   settings.packages = packages;
+  const nextContent = `${JSON.stringify(settings, null, 2)}\n`;
+  if (rawExisting === nextContent) return;
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  try {
+    fs.writeFileSync(settingsPath, nextContent, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== "EBUSY") throw err;
+  }
 }
 
 function copyDirSync(from: string, to: string): void {
@@ -118,5 +160,26 @@ export function installPiPackages(cwd: string = process.cwd()): InstallResult {
     declarePiPackage(path.join(paths.agentDir, "settings.json"), `./packages/${dirName}`);
     installed.push({ id, dest, alreadySynced });
   }
+  const settingsPath = path.join(paths.agentDir, "settings.json");
+  for (const spec of EXTERNAL_PACKAGES) declarePiPackage(settingsPath, spec);
   return { installed, skipped };
+}
+
+function offlineMode(): boolean {
+  const value = process.env.PI_OFFLINE?.toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+/**
+ * 把已声明、尚未落地的 npm Pi 包装进 agentDir。声明本身由 installPiPackages 写入。
+ * 离线或网络失败时只记日志，任务仍可运行，只是 doc_to_md 不可用。
+ */
+export async function ensureExternalPiPackages(cwd: string = process.cwd()): Promise<void> {
+  if (offlineMode()) return;
+  const settings = SettingsManager.create(cwd, paths.agentDir);
+  const manager = new DefaultPackageManager({ cwd, agentDir: paths.agentDir, settingsManager: settings });
+  for (const spec of EXTERNAL_PACKAGES) {
+    if (manager.getInstalledPath(spec.source, "user")) continue;
+    await manager.install(spec.source);
+  }
 }

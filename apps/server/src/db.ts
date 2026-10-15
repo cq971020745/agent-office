@@ -266,6 +266,48 @@ export function migrate(): void {
       ).run(cleaned, t.id);
     }
   }
+
+  // V13：供应商显式绑定语音转写（ASR）模型 + 任务消息持久化思考流与工具调用步骤元数据
+  for (const sql of [
+    "ALTER TABLE model_providers ADD COLUMN asr_model TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE task_messages ADD COLUMN meta TEXT NOT NULL DEFAULT '{}'",
+  ]) {
+    try {
+      db.exec(sql);
+    } catch {
+      // duplicate column name
+    }
+  }
+
+  // V14：定时与自动化巡检任务（scheduled_tasks）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      agent_id TEXT NOT NULL REFERENCES agents(id),
+      provider_id TEXT,
+      model_id TEXT,
+      title TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      schedule_expr TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_run_at TEXT,
+      last_task_id TEXT,
+      next_run_at TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // V15：任务会话级工具授权。专家 deny 仍优先；这里只记录用户对本任务放行过的 ask 工具。
+  // 任务删除时由路由显式清除（SQLite 默认不强制外键级联）。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_session_grants (
+      task_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (task_id, tool_name)
+    );
+  `);
 }
 
 // 内置默认专家「通用助手」：专家非必选——派发任务时未指定专家则落到这里。

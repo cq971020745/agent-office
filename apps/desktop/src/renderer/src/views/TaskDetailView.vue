@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import type { Deliverable, Task, TaskEventEnvelope, TaskMessage } from "@office/shared";
+import type { Deliverable, Task, TaskEventEnvelope, TaskMessage, TaskTurnStep, ToolApprovalDecision } from "@office/shared";
 import {
   approveTask,
   approveToolCall,
   cancelTask,
+  listSessionGrants,
+  revokeSessionGrant,
   downloadDeliverable,
   getTask,
   getTaskMessages,
   listDeliverables,
   openTaskEvents,
+  renameTask,
   sendTaskMessage,
   sendTaskMessageWithFiles,
 } from "../api";
@@ -37,13 +40,15 @@ watch(
     closeEvents?.();
     closeEvents = undefined;
     lastSeq = 0;
-    live.value = [];
+    resetLive();
     previewFile.value = null;
     error.value = "";
     task.value = null;
     messages.value = [];
     deliverables.value = [];
     toolApproval.value = null;
+    sessionGrants.value = [];
+    editingTitle.value = false;
     taskId.value = id as string;
     // 换任务时清掉上一任务遗留的 @ 引用与弹层状态
     mention.state.open = false;
@@ -56,26 +61,83 @@ watch(
 const task = ref<Task | null>(null);
 const messages = ref<TaskMessage[]>([]);
 const deliverables = ref<Deliverable[]>([]);
-// 当前进行中轮次的实时输出（轮次结束即被消息列表取代）；think 为模型思考流（think）
-const live = ref<{ kind: "text" | "tool" | "file" | "think"; text: string }[]>([]);
+// 当前进行中轮次的实时结构化输出（思考流 + 工具步骤 + 实时 Markdown 正文）
+const liveThinking = ref("");
+const liveSteps = ref<TaskTurnStep[]>([]);
+const liveText = ref("");
+const editingTitle = ref(false);
+const titleDraft = ref("");
+
+function resetLive(): void {
+  liveThinking.value = "";
+  liveSteps.value = [];
+  liveText.value = "";
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  workspace_list: "📂 列出工作区",
+  workspace_read: "📖 读取文件",
+  workspace_write: "📄 写入文件",
+  workspace_edit: "✏️ 局部编辑",
+  transcribe_audio: "🎙️ 音频转写",
+  delegate_to_agent: "🤝 委派专家",
+  fetch_url: "🌐 抓取网页",
+  run_code: "🐍 运行代码",
+  read_skill: "📚 加载技能",
+  run_skill_script: "⚡ 执行技能脚本",
+  terminal: "⌨️ 终端",
+  doc_to_md: "📄 文档转 Markdown",
+};
+
+function formatToolName(name: string): string {
+  if (TOOL_LABELS[name]) return TOOL_LABELS[name]!;
+  if (name.startsWith("mcp_")) return `🔌 ${name.replace(/^mcp_/, "")}`;
+  return `🛠️ ${name}`;
+}
+
+function startEditTitle(): void {
+  if (!task.value) return;
+  titleDraft.value = task.value.title || "";
+  editingTitle.value = true;
+}
+
+async function saveTitle(): Promise<void> {
+  if (!task.value || !editingTitle.value) return;
+  editingTitle.value = false;
+  const next = titleDraft.value.trim();
+  if (!next || next === task.value.title) return;
+  try {
+    const res = await renameTask(task.value.id, next);
+    task.value.title = res.title;
+    toast("success", "任务标题已更新");
+  } catch (err) {
+    toastError(err, "重命名失败");
+  }
+}
 const draft = ref("");
 const error = ref("");
 const sendError = ref("");
 const previewFile = ref<Deliverable | null>(null);
+const previewCollapsed = ref(false);
+const hasPreviewPanel = computed(() => previewFile.value !== null || deliverables.value.length > 0);
 const chatEl = ref<HTMLElement | null>(null);
-const liveEl = ref<HTMLElement | null>(null);
 // 用户是否停留在聊天底部附近（决定新消息是否自动滚动，避免打断回看）
 const atBottom = ref(true);
 let closeEvents: (() => void) | undefined;
 let lastSeq = 0;
 let elapsedTimer: ReturnType<typeof setInterval> | undefined;
 
+function openPreview(file: Deliverable): void {
+  previewFile.value = file;
+  previewCollapsed.value = false;
+}
+
 const running = computed(() => task.value?.status === "running" || task.value?.status === "pending");
 const awaitingApproval = computed(() => task.value?.status === "awaiting_approval");
 // 运行中也可发送（发送 = 打断当前轮并开新一轮），只挡重复提交
 const canSend = computed(() => draft.value.trim().length > 0 && !sending.value);
 
-// ---------- 附件（随追问一起上传，落进任务工作区） ----------
+// ---------- 附件（随追问一起上传，落进任务工作区，支持 Ctrl+V 粘贴截图） ----------
 const {
   attachments,
   fileInput,
@@ -87,6 +149,7 @@ const {
   onDragEnter,
   onDragLeave,
   onDrop,
+  onPaste,
 } = useAttachments();
 const sending = ref(false);
 
@@ -157,9 +220,13 @@ async function onRejectPlan(): Promise<void> {
 // 工具执行前任务暂停并广播 tool_approval_request；SSE 重放历史，页面刷新/重连后审批不丢。
 const toolApproval = ref<{ tool: string; input: string } | null>(null);
 const toolDeciding = ref(false);
+const sessionGrants = ref<string[]>([]);
 
 function fmtToolInput(input: unknown): string {
   try {
+    if (input && typeof input === "object" && "command" in input && typeof input.command === "string") {
+      return input.command.length > 800 ? `${input.command.slice(0, 800)}…` : input.command;
+    }
     const text = typeof input === "string" ? input : JSON.stringify(input ?? {});
     return text.length > 400 ? `${text.slice(0, 400)}…` : text;
   } catch {
@@ -167,17 +234,39 @@ function fmtToolInput(input: unknown): string {
   }
 }
 
-async function decideToolCall(approved: boolean): Promise<void> {
+async function refreshSessionGrants(): Promise<void> {
+  const res = await listSessionGrants(taskId.value).catch(() => ({ tools: sessionGrants.value }));
+  sessionGrants.value = res.tools;
+}
+
+async function decideToolCall(decision: ToolApprovalDecision): Promise<void> {
   if (toolDeciding.value || !toolApproval.value) return;
   toolDeciding.value = true;
   try {
-    await approveToolCall(taskId.value, approved);
-    toast("success", approved ? "已放行本次工具调用，任务继续执行" : "已拒绝本次工具调用");
+    await approveToolCall(taskId.value, decision);
+    const tip =
+      decision === "deny"
+        ? "已拒绝本次工具调用"
+        : decision === "allow_session"
+          ? "已允许该工具在本会话继续调用"
+          : "已允许本次工具调用，任务继续执行";
+    toast("success", tip);
     toolApproval.value = null;
+    if (decision === "allow_session") await refreshSessionGrants();
   } catch (err) {
     toastError(err, "操作失败");
   } finally {
     toolDeciding.value = false;
+  }
+}
+
+async function revokeGrant(tool: string): Promise<void> {
+  try {
+    await revokeSessionGrant(taskId.value, tool);
+    sessionGrants.value = sessionGrants.value.filter((name) => name !== tool);
+    toast("success", `已撤销本会话对 ${tool} 的授权`);
+  } catch (err) {
+    toastError(err, "撤销失败");
   }
 }
 
@@ -220,24 +309,12 @@ const STATUS_TEXT: Record<string, string> = {
   cancelled: "已取消",
 };
 
-function pushLive(kind: "text" | "tool" | "file" | "think", text: string): void {
-  const last = live.value.at(-1);
-  if ((kind === "text" || kind === "think") && last?.kind === kind) last.text += text;
-  else live.value.push({ kind, text });
-  // 思考流可能很长，只保留末尾一段，避免面板与 DOM 无限增长
-  const cur = live.value.at(-1);
-  if (kind === "think" && cur && cur.text.length > 4000) cur.text = "…" + cur.text.slice(-3800);
-}
-
 // 有新内容时自动滚动到底部（仅当用户停留在底部附近，回看历史不打扰）
 watch(
-  () => [messages.value.length, live.value.length, live.value.at(-1)?.text.length] as const,
+  () => [messages.value.length, liveSteps.value.length, liveThinking.value.length, liveText.value.length] as const,
   async () => {
     await nextTick();
-    if (live.value.length) {
-      const el = liveEl.value;
-      if (el) el.scrollTop = el.scrollHeight;
-    } else if (atBottom.value) {
+    if (atBottom.value) {
       const el = chatEl.value;
       if (el) el.scrollTop = el.scrollHeight;
     }
@@ -268,6 +345,23 @@ watch(
   { immediate: true }
 );
 
+function maybeNotifyDesktop(title: string, body: string): void {
+  if (document.visibilityState === "visible" && document.hasFocus()) return;
+  void window.agentOffice?.notify?.(title, body);
+}
+
+function summarizeLiveToolArgs(args: Record<string, unknown> | undefined): string | undefined {
+  if (!args) return undefined;
+  if (typeof args.path === "string" && args.path) return args.path;
+  if (typeof args.agent === "string" && args.agent) return args.agent;
+  if (typeof args.skill === "string" && args.skill) {
+    return typeof args.script === "string" ? `${args.skill}/${args.script}` : args.skill;
+  }
+  if (typeof args.name === "string" && args.name) return args.name;
+  if (typeof args.url === "string" && args.url) return args.url;
+  return undefined;
+}
+
 function handleEnvelope(env: TaskEventEnvelope): void {
   // SSE 断线重连会整段重放历史，按 seq 去重
   if (env.seq <= lastSeq) return;
@@ -279,9 +373,10 @@ function handleEnvelope(env: TaskEventEnvelope): void {
     return;
   }
   if (env.kind === "task") {
+    const prevStatus = task.value?.status;
     if (task.value) task.value.status = env.status;
     if (env.status === "running") {
-      live.value = [];
+      resetLive();
       toolApproval.value = null; // 审批落定（放行/拒绝/超时）后任务回到运行态
     }
     if (
@@ -292,7 +387,13 @@ function handleEnvelope(env: TaskEventEnvelope): void {
     ) {
       void refreshMessages();
       void refreshDeliverables();
-      live.value = [];
+      resetLive();
+      if (prevStatus === "running" || prevStatus === "pending") {
+        const tName = task.value?.title || "任务";
+        if (env.status === "completed") maybeNotifyDesktop("任务已完成", `「${tName}」已执行完毕`);
+        else if (env.status === "failed") maybeNotifyDesktop("任务执行失败", `「${tName}」执行出错`);
+        else if (env.status === "awaiting_approval") maybeNotifyDesktop("任务待确认", `「${tName}」已生成执行清单，请确认后继续`);
+      }
     }
     return;
   }
@@ -301,21 +402,27 @@ function handleEnvelope(env: TaskEventEnvelope): void {
     type: string;
     assistantMessageEvent?: { type: string; delta?: string };
     toolName?: string;
-    args?: { path?: string };
+    args?: Record<string, unknown>;
+    isError?: boolean;
     tool?: string;
     input?: unknown;
   };
   if (event.type === "tool_approval_request") {
     toolApproval.value = { tool: event.tool ?? "", input: fmtToolInput(event.input) };
+    maybeNotifyDesktop("工具调用待确认", `任务请求调用工具 ${event.tool ?? ""}`);
   } else if (event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_delta" && event.assistantMessageEvent.delta) {
-    // 思考阶段也有输出：不显示就是"看起来卡住"（正文开始前的 ~90s 空窗）
-    pushLive("think", event.assistantMessageEvent.delta);
+    liveThinking.value += event.assistantMessageEvent.delta;
+    if (liveThinking.value.length > 4000) liveThinking.value = "…" + liveThinking.value.slice(-3800);
   } else if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta" && event.assistantMessageEvent.delta) {
-    pushLive("text", event.assistantMessageEvent.delta);
-  } else if (event.type === "tool_execution_start" && event.toolName === "workspace_write") {
-    pushLive("file", event.args?.path ?? "");
-  } else if (event.type === "tool_execution_start") {
-    pushLive("tool", `调用工具 ${event.toolName ?? ""}`);
+    liveText.value += event.assistantMessageEvent.delta;
+  } else if (event.type === "tool_execution_start" && event.toolName) {
+    liveSteps.value.push({
+      tool: event.toolName,
+      detail: summarizeLiveToolArgs(event.args),
+      status: "done",
+    });
+  } else if (event.type === "tool_execution_end" && event.isError && liveSteps.value.length > 0) {
+    liveSteps.value[liveSteps.value.length - 1]!.status = "error";
   }
 }
 
@@ -331,7 +438,7 @@ async function refreshDeliverables(): Promise<void> {
 async function refreshAll(): Promise<void> {
   try {
     task.value = await getTask(taskId.value);
-    await Promise.all([refreshMessages(), refreshDeliverables()]);
+    await Promise.all([refreshMessages(), refreshDeliverables(), refreshSessionGrants()]);
     // 常驻订阅：多轮对话期间页面不关流，重连靠 seq 去重
     closeEvents = openTaskEvents(taskId.value, handleEnvelope);
   } catch (err) {
@@ -391,10 +498,15 @@ function onTaKeydown(e: KeyboardEvent): void {
   mention.onTaKeydown(e);
 }
 
-/** 输入/点击时同时探测 / 与 @ 两个弹层（检测正则互斥，不会同时开） */
+/** 输入/点击时同时探测 / 与 @ 两个弹层（检测正则互斥，不会同时开），并自适应高度 */
 function detectPopups(): void {
   slash.detectSlash();
   mention.detectMention();
+  const ta = taRef.value;
+  if (ta) {
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(180, Math.max(46, ta.scrollHeight))}px`;
+  }
 }
 
 /** 语音转写回填：插入光标处，与前后已有内容补空格分隔 */
@@ -436,6 +548,46 @@ async function onRetry(): Promise<void> {
   } finally {
     retrying.value = false;
   }
+}
+
+const speakingId = ref("");
+
+function stripMarkdownForSpeech(md: string): string {
+  return md
+    .replace(/```[\s\S]*?```/g, "（代码段已省略）")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[#>*_~|-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function toggleSpeakMessage(m: TaskMessage): void {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    toast("error", "当前系统不支持语音合成（TTS）");
+    return;
+  }
+  const synth = window.speechSynthesis;
+  if (speakingId.value === m.id) {
+    synth.cancel();
+    speakingId.value = "";
+    return;
+  }
+  synth.cancel();
+  const text = stripMarkdownForSpeech(m.content);
+  if (!text) return;
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "zh-CN";
+  utter.rate = 1.05;
+  utter.onend = () => {
+    if (speakingId.value === m.id) speakingId.value = "";
+  };
+  utter.onerror = () => {
+    if (speakingId.value === m.id) speakingId.value = "";
+  };
+  speakingId.value = m.id;
+  synth.speak(utter);
 }
 
 async function copyMessage(m: TaskMessage): Promise<void> {
@@ -511,6 +663,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   closeEvents?.();
   clearInterval(elapsedTimer);
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
   window.removeEventListener("mousemove", onSplitterMove);
   window.removeEventListener("mouseup", onSplitterUp);
   document.body.classList.remove("col-resizing");
@@ -526,7 +681,21 @@ onBeforeUnmount(() => {
         </RouterLink>
         <span class="v-divider" />
         <div class="tb-text">
-          <h2 class="tb-title">{{ task.title || "（无标题）" }}</h2>
+          <div v-if="editingTitle" class="tb-title-edit">
+            <input
+              v-model="titleDraft"
+              class="tb-title-input"
+              maxlength="120"
+              autofocus
+              @keydown.enter="saveTitle"
+              @keydown.esc="editingTitle = false"
+              @blur="saveTitle"
+            />
+          </div>
+          <h2 v-else class="tb-title" title="点击修改标题" @click="startEditTitle">
+            {{ task.title || "（无标题）" }}
+            <span class="tb-edit-hint">✎</span>
+          </h2>
           <p class="tb-meta">
             <AgentAvatar :name="task.agentName" :size="15" />
             {{ task.agentName }} · 创建于 {{ timeAgo(task.createdAt) }}
@@ -555,16 +724,47 @@ onBeforeUnmount(() => {
               <div v-else class="msg assistant">
                 <AgentAvatar :name="task.agentName" :size="26" class="msg-avatar" />
                 <div class="a-body">
+                  <!-- 历史轮次的深度思考与工具调用轨迹（持久化自 task_messages.meta） -->
+                  <details v-if="m.thinking || m.steps?.length" class="trace-box history-trace">
+                    <summary class="trace-summary">
+                      <span v-if="m.thinking" class="trace-pill">💭 深度思考</span>
+                      <span v-if="m.steps?.length" class="trace-pill">🛠️ 调用了 {{ m.steps.length }} 个工具步骤</span>
+                    </summary>
+                    <div class="trace-content">
+                      <div v-if="m.steps?.length" class="step-chips">
+                        <span
+                          v-for="(st, idx) in m.steps"
+                          :key="idx"
+                          class="step-chip"
+                          :class="{ err: st.status === 'error' }"
+                        >
+                          <span class="step-tool">{{ formatToolName(st.tool) }}</span>
+                          <span v-if="st.detail" class="step-detail mono">{{ st.detail }}</span>
+                        </span>
+                      </div>
+                      <pre v-if="m.thinking" class="think-block">{{ m.thinking }}</pre>
+                    </div>
+                  </details>
+
                   <div class="md" v-html="renderMarkdown(m.content)"></div>
-                  <button
-                    v-if="!m.id.startsWith('local-')"
-                    class="copy"
-                    title="复制全文"
-                    @click="copyMessage(m)"
-                  >
-                    <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-                    复制
-                  </button>
+                  <div v-if="!m.id.startsWith('local-')" class="msg-actions">
+                    <button
+                      class="copy"
+                      title="复制全文"
+                      @click="copyMessage(m)"
+                    >
+                      <svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                      复制
+                    </button>
+                    <button
+                      class="copy"
+                      :class="{ speaking: speakingId === m.id }"
+                      :title="speakingId === m.id ? '停止朗读' : '语音朗读此回复'"
+                      @click="toggleSpeakMessage(m)"
+                    >
+                      {{ speakingId === m.id ? "⏹ 停止朗读" : "🔊 朗读" }}
+                    </button>
+                  </div>
                 </div>
               </div>
               <div v-if="m.role === 'assistant' && filesAfterMsg.get(m.id)?.length" class="msg-files">
@@ -574,7 +774,7 @@ onBeforeUnmount(() => {
                     成果物
                     <span class="fb-count">{{ filesAfterMsg.get(m.id)?.length }}</span>
                   </div>
-                  <button v-for="f in filesAfterMsg.get(m.id)" :key="f.id" class="fb-row" @click="previewFile = f">
+                  <button v-for="f in filesAfterMsg.get(m.id)" :key="f.id" class="fb-row" @click="openPreview(f)">
                     <span class="file-icon">{{ fileEmoji(f.filename) }}</span>
                     <span class="fc-name mono">{{ f.relPath }}</span>
                     <span class="fc-size">{{ formatSize(f.size) }}</span>
@@ -591,13 +791,33 @@ onBeforeUnmount(() => {
               <AgentAvatar :name="task.agentName" :size="26" class="msg-avatar" />
               <div class="a-body">
                 <div class="turn-label"><span class="spinner"></span> {{ task.agentName }} 正在处理<span v-if="elapsedText"> · {{ elapsedText }}</span></div>
-                <div class="lines" ref="liveEl">
-                  <template v-for="(line, i) in live" :key="i">
-                    <p v-if="line.kind === 'file'" class="file-line">📄 {{ line.text }}</p>
-                    <p v-else-if="line.kind === 'think'" class="think-line">💭 {{ line.text }}</p>
-                    <p v-else :class="line.kind">{{ line.text }}</p>
-                  </template>
-                  <p v-if="!live.length" class="hint-dark">正在思考，输出将实时出现在这里…</p>
+
+                <!-- 实时思考过程与工具步骤条 -->
+                <details v-if="liveThinking || liveSteps.length" class="trace-box live-trace" open>
+                  <summary class="trace-summary">
+                    <span v-if="liveThinking" class="trace-pill">💭 思考中…</span>
+                    <span v-if="liveSteps.length" class="trace-pill">🛠️ 已执行 {{ liveSteps.length }} 步</span>
+                  </summary>
+                  <div class="trace-content">
+                    <div v-if="liveSteps.length" class="step-chips">
+                      <span
+                        v-for="(st, idx) in liveSteps"
+                        :key="idx"
+                        class="step-chip"
+                        :class="{ err: st.status === 'error' }"
+                      >
+                        <span class="step-tool">{{ formatToolName(st.tool) }}</span>
+                        <span v-if="st.detail" class="step-detail mono">{{ st.detail }}</span>
+                      </span>
+                    </div>
+                    <pre v-if="liveThinking" class="think-block">{{ liveThinking }}</pre>
+                  </div>
+                </details>
+
+                <!-- 实时流式 Markdown 正文 -->
+                <div v-if="liveText" class="md live-md" v-html="renderMarkdown(liveText)" />
+                <div v-else-if="!liveThinking && !liveSteps.length" class="live-waiting">
+                  正在思考与规划任务步骤，输出将实时呈现在这里…
                 </div>
               </div>
             </div>
@@ -605,13 +825,20 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="composer-zone">
-          <!-- ask 级工具调用审批（P2-2）：任务在工具执行前暂停，等待人工放行 -->
+          <div v-if="sessionGrants.length" class="session-grants">
+            <span>本会话已授权</span>
+            <span v-for="tool in sessionGrants" :key="tool" class="grant-chip">
+              {{ tool }}
+              <button type="button" @click="revokeGrant(tool)">撤销</button>
+            </span>
+          </div>
+          <!-- ask 级工具调用审批：拒绝、仅本次、本会话 -->
           <div v-if="toolApproval" class="approval-panel">
             <div class="ap-head">
               <span class="ap-badge tool">需确认</span>
               <div class="ap-head-text">
                 <h3>工具调用待确认</h3>
-                <p>该专家的工具策略要求对敏感调用逐次确认。任务已暂停：放行后继续执行，超过 5 分钟未处理将自动拒绝本次调用。</p>
+                <p>该调用需要确认。拒绝或仅本次允许只影响这一次；本会话允许后，同一任务里再调用该工具不再询问。超过 5 分钟未处理将自动拒绝。</p>
               </div>
             </div>
             <div class="ap-tool-box">
@@ -620,11 +847,14 @@ onBeforeUnmount(() => {
             </div>
             <div class="ap-actions">
               <span class="ap-spacer" />
-              <button class="sm ap-reject" :disabled="toolDeciding" @click="decideToolCall(false)">
-                {{ toolDeciding ? "提交中…" : "拒绝本次调用" }}
+              <button class="sm ap-reject" :disabled="toolDeciding" @click="decideToolCall('deny')">
+                {{ toolDeciding ? "提交中…" : "拒绝" }}
               </button>
-              <button class="sm retry" :disabled="toolDeciding" @click="decideToolCall(true)">
-                {{ toolDeciding ? "提交中…" : "放行执行" }}
+              <button class="sm" :disabled="toolDeciding" @click="decideToolCall('allow_once')">
+                {{ toolDeciding ? "提交中…" : "仅本次允许" }}
+              </button>
+              <button class="sm retry" :disabled="toolDeciding" @click="decideToolCall('allow_session')">
+                {{ toolDeciding ? "提交中…" : "本会话允许" }}
               </button>
             </div>
           </div>
@@ -688,10 +918,11 @@ onBeforeUnmount(() => {
               ref="taRef"
               v-model="draft"
               rows="2"
-              :placeholder="running ? 'Agent 正在执行本轮，输入消息将打断并继续对话…' : '继续追问，输入 @ 引用联系人 / 云文档，输入 / 调用技能'"
+              :placeholder="running ? 'Agent 正在执行本轮，输入消息将打断并继续对话…' : '继续追问，输入 @ 引用联系人 / 云文档，输入 / 调用技能，支持 Ctrl+V 粘贴截图'"
               @keydown="onTaKeydown"
               @input="detectPopups"
               @click="detectPopups"
+              @paste="onPaste"
             ></textarea>
             <MentionPopup :api="mention" />
             <SkillPopup :api="slash" />
@@ -736,6 +967,7 @@ onBeforeUnmount(() => {
       </section>
 
       <div
+        v-if="hasPreviewPanel && !previewCollapsed"
         class="splitter"
         :class="{ active: draggingCol }"
         title="拖拽调整预览宽度 · 双击复位"
@@ -745,10 +977,12 @@ onBeforeUnmount(() => {
 
       <PreviewPanel
         :task-id="taskId"
+        :workspace-path="task.workspacePath"
         :file="previewFile"
         :deliverables="deliverables"
+        v-model:collapsed="previewCollapsed"
         :width="previewCssWidth"
-        @open="previewFile = $event"
+        @open="openPreview"
         @close="previewFile = null"
       />
     </div>
@@ -814,6 +1048,30 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tb-edit-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.tb-title:hover .tb-edit-hint {
+  opacity: 1;
+}
+.tb-title-edit {
+  display: flex;
+  align-items: center;
+}
+.tb-title-input {
+  width: 280px;
+  padding: 3px 8px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 6px;
 }
 .tb-meta {
   margin: 2px 0 0;
@@ -938,6 +1196,12 @@ button.sm {
   font-size: 13.5px;
   line-height: 1.7;
 }
+.msg-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
 .copy {
   display: inline-flex;
   align-items: center;
@@ -951,7 +1215,11 @@ button.sm {
   font-size: 11.5px;
   opacity: 0;
   transition: opacity 0.12s;
-  margin-top: 4px;
+}
+.copy.speaking {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .a-body:hover .copy {
   opacity: 1;
@@ -1056,7 +1324,7 @@ button.sm {
   height: 14px;
 }
 
-/* ---------- 进行中轮次 ---------- */
+/* ---------- 思考过程与工具步骤轨迹（实时 + 历史） ---------- */
 .turn-label {
   display: inline-flex;
   align-items: center;
@@ -1065,35 +1333,112 @@ button.sm {
   color: var(--text-2);
   margin-bottom: 8px;
 }
-.lines {
-  background: var(--term-bg);
-  color: var(--term-text);
+.trace-box {
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 12px 14px;
-  max-height: 260px;
-  overflow-y: auto;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.trace-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.trace-summary::-webkit-details-marker {
+  display: none;
+}
+.trace-summary::before {
+  content: "▸";
+  font-size: 11px;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+.trace-box[open] .trace-summary::before {
+  transform: rotate(90deg);
+}
+.trace-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.trace-content {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-faint);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.step-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.step-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text);
+  max-width: 100%;
+}
+.step-chip.err {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.step-tool {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.step-detail {
+  color: var(--text-3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+.think-block {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-faint);
   font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.7;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-3);
   white-space: pre-wrap;
   word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
 }
-.lines .tool {
-  color: #7dd3fc;
+.live-md {
+  padding-top: 2px;
 }
-.lines .file-line {
-  color: #6ee7b7;
-}
-/* 模型思考流：弱化显示，与正文区分 */
-.lines .think-line {
-  color: #8b96ab;
+.live-waiting {
+  font-size: 12.5px;
+  color: var(--text-3);
   font-style: italic;
-}
-.lines p {
-  margin: 0 0 4px;
-}
-.hint-dark {
-  color: rgba(215, 224, 238, 0.55);
+  padding: 6px 0;
 }
 .spinner {
   width: 12px;
@@ -1411,6 +1756,34 @@ button.sm {
 }
 .ap-reject:hover:not(:disabled) {
   background: var(--danger-border);
+}
+.session-grants {
+  max-width: 780px;
+  margin: 0 auto 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.grant-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.grant-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
 }
 .err-page {
   max-width: 640px;

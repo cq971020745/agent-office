@@ -2,7 +2,17 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { Task, WpsProfile } from "@office/shared";
-import { getRole, getToken, getUsername, listTasks, setToken, changePassword, getWpsMe, syncWpsAccount } from "./api";
+import {
+  changePassword,
+  getRole,
+  getToken,
+  getUsername,
+  getWpsMe,
+  listTasks,
+  setToken,
+  setUsername,
+  syncWpsAccount,
+} from "./api";
 import { timeAgo } from "./utils/format";
 import Toasts from "./components/Toasts.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
@@ -12,8 +22,9 @@ import { toast } from "./composables/toast";
 const route = useRoute();
 const router = useRouter();
 const loggedIn = computed(() => route.path !== "/login" && !!getToken());
-const isAdmin = computed(() => getRole() === "admin");
-const username = computed(() => getUsername() || "用户");
+// route.path 作为响应式依赖，确保同一应用进程切换账号后角色与用户名立即刷新。
+const isAdmin = computed(() => route.path !== "/login" && getRole() === "admin");
+const username = computed(() => (route.path === "/login" ? "用户" : getUsername() || "用户"));
 
 const theme = ref<"light" | "dark">(
   document.documentElement.dataset.theme === "dark" ? "dark" : "light"
@@ -24,10 +35,19 @@ function toggleTheme(): void {
   localStorage.setItem("agent-office-theme", theme.value);
 }
 
+const sidebarCollapsed = ref(localStorage.getItem("agent-office-sidebar-collapsed") === "1");
+function toggleSidebar(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+  localStorage.setItem("agent-office-sidebar-collapsed", sidebarCollapsed.value ? "1" : "0");
+}
+
 const allTasks = ref<Task[]>([]);
 const recentTasks = computed(() => allTasks.value.slice(0, 8));
 const runningCount = computed(
   () => allTasks.value.filter((t) => t.status === "running" || t.status === "pending").length
+);
+const awaitingCount = computed(
+  () => allTasks.value.filter((t) => t.status === "awaiting_approval").length
 );
 
 async function refreshRecent(): Promise<void> {
@@ -76,6 +96,7 @@ async function logout(): Promise<void> {
   });
   if (!ok) return;
   setToken("");
+  setUsername("");
   void router.push("/login");
 }
 
@@ -128,14 +149,35 @@ const wpsBusy = ref(false);
 const wpsError = ref("");
 const wpsConfigured = ref(true);
 const wpsProfile = ref<WpsProfile | null>(null);
+const roleLabel = computed(() => (isAdmin.value ? "管理员" : "成员"));
+const accountDisplayName = computed(() => wpsProfile.value?.name || username.value);
+
+async function refreshWpsProfile(): Promise<void> {
+  const res = await getWpsMe();
+  wpsConfigured.value = res.configured;
+  wpsProfile.value = res.profile;
+}
+
+watch(
+  loggedIn,
+  (value) => {
+    if (!value) {
+      wpsProfile.value = null;
+      return;
+    }
+    // 登录后加载当前平台账号自己的 WPS 缓存，用于侧栏身份展示。
+    void refreshWpsProfile().catch(() => {
+      wpsProfile.value = null;
+    });
+  },
+  { immediate: true }
+);
 
 async function openWps(): Promise<void> {
   wpsError.value = "";
   wpsOpen.value = true;
   try {
-    const res = await getWpsMe();
-    wpsConfigured.value = res.configured;
-    wpsProfile.value = res.profile;
+    await refreshWpsProfile();
   } catch {
     wpsError.value = "无法获取账号状态，请稍后重试";
   }
@@ -159,36 +201,50 @@ async function submitWpsSync(): Promise<void> {
 
 <template>
   <div class="shell">
-    <aside v-if="loggedIn" class="sidebar">
-      <RouterLink to="/" class="brand">
-        <span class="logo">A</span>
-        <span class="brand-text">
-          <span class="name">Agent Office</span>
-          <span class="ver">AI 数字员工办公室</span>
-        </span>
-      </RouterLink>
+    <aside v-if="loggedIn" class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+      <div class="brand-row">
+        <RouterLink to="/" class="brand" :title="sidebarCollapsed ? 'Agent Office' : undefined">
+          <span class="logo">A</span>
+          <span v-if="!sidebarCollapsed" class="brand-text">
+            <span class="name">Agent Office</span>
+            <span class="ver">AI 数字员工办公室</span>
+          </span>
+        </RouterLink>
+        <button
+          type="button"
+          class="icon-btn collapse-btn"
+          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          @click="toggleSidebar"
+        >
+          <svg class="icon" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M9 3v18" />
+          </svg>
+        </button>
+      </div>
 
       <nav class="nav">
-        <RouterLink to="/" class="nav-item" exact-active-class="active">
+        <RouterLink to="/" class="nav-item" exact-active-class="active" :title="sidebarCollapsed ? '新建任务' : undefined">
           <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-          新建任务
+          <span v-if="!sidebarCollapsed">新建任务</span>
         </RouterLink>
-        <RouterLink to="/tasks" class="nav-item" active-class="active">
+        <RouterLink to="/tasks" class="nav-item" active-class="active" :title="sidebarCollapsed ? '任务列表' : undefined">
           <svg class="icon" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></svg>
-          任务列表
-          <span v-if="runningCount" class="nav-badge" title="进行中的任务">{{ runningCount }}</span>
+          <span v-if="!sidebarCollapsed">任务列表</span>
+          <span v-if="awaitingCount && !sidebarCollapsed" class="nav-badge warn" title="待确认任务">{{ awaitingCount }}</span>
+          <span v-else-if="runningCount && !sidebarCollapsed" class="nav-badge" title="进行中的任务">{{ runningCount }}</span>
         </RouterLink>
-        <RouterLink to="/experts" class="nav-item" active-class="active">
+        <RouterLink to="/experts" class="nav-item" active-class="active" :title="sidebarCollapsed ? '专家·技能·连接器' : undefined">
           <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3" /><circle cx="8.5" cy="11" r="1.5" /><circle cx="15.5" cy="11" r="1.5" /><path d="M8 15.5h8" /></svg>
-          专家·技能·连接器
+          <span v-if="!sidebarCollapsed">专家·技能·连接器</span>
         </RouterLink>
-        <RouterLink v-if="isAdmin" to="/admin" class="nav-item" active-class="active">
+        <RouterLink v-if="isAdmin" to="/admin" class="nav-item" active-class="active" :title="sidebarCollapsed ? '管理后台' : undefined">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
-          管理后台
+          <span v-if="!sidebarCollapsed">管理后台</span>
         </RouterLink>
       </nav>
 
-      <div v-if="recentTasks.length" class="section">
+      <div v-if="recentTasks.length && !sidebarCollapsed" class="section">
         <div class="section-head">
           <span>最近任务</span>
           <span class="count">{{ recentTasks.length }}</span>
@@ -209,12 +265,21 @@ async function submitWpsSync(): Promise<void> {
 
       <div class="spacer" />
 
-      <div class="user">
-        <span class="avatar">{{ username.slice(0, 1).toUpperCase() }}</span>
-        <span class="user-meta">
-          <span class="user-name">{{ username }}</span>
-          <span class="user-role" :class="isAdmin ? 'admin' : 'member'">{{ isAdmin ? "管理员" : "成员" }}</span>
-        </span>
+      <div class="user" :class="{ compact: sidebarCollapsed }">
+        <button
+          type="button"
+          class="user-identity"
+          :title="sidebarCollapsed ? `${accountDisplayName}（${roleLabel}）` : '账号与 WPS 用户信息'"
+          @click="openWps"
+        >
+          <span class="avatar">{{ accountDisplayName.slice(0, 1).toUpperCase() }}</span>
+          <span v-if="!sidebarCollapsed" class="user-meta">
+            <span class="user-name">{{ accountDisplayName }}</span>
+            <span class="user-role" :class="isAdmin ? 'admin' : 'member'">
+              {{ wpsProfile ? `${username} · ${roleLabel}` : roleLabel }}
+            </span>
+          </span>
+        </button>
         <button
           class="icon-btn"
           :title="theme === 'dark' ? '切换到浅色' : '切换到深色'"
@@ -231,8 +296,8 @@ async function submitWpsSync(): Promise<void> {
         </button>
         <button
           class="icon-btn"
-          title="WPS 365 账号"
-          aria-label="WPS 365 账号"
+          title="账号与 WPS 用户信息"
+          aria-label="账号与 WPS 用户信息"
           @click="openWps"
         >
           <svg class="icon" viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 1 0-.88-8.92 6 6 0 0 0-11.4 1.98A3.5 3.5 0 0 0 6 19z" /></svg>
@@ -284,16 +349,22 @@ async function submitWpsSync(): Promise<void> {
         </div>
       </form>
     </div>
-    <!-- WPS 365 账号弹窗 -->
+    <!-- 平台账号与当前用户自己的 WPS 365 信息 -->
     <div v-if="wpsOpen" class="overlay" @click.self="wpsOpen = false">
-      <div class="dialog wps-dialog" role="dialog" aria-label="WPS 365 账号">
+      <div class="dialog wps-dialog" role="dialog" aria-label="账号与 WPS 用户信息">
         <div class="dialog-head">
-          <h3>WPS 365 账号</h3>
+          <h3>账号与 WPS 用户信息</h3>
           <button type="button" class="icon-btn" title="关闭" @click="wpsOpen = false">
             <svg class="icon" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
           </button>
         </div>
         <div class="dialog-body">
+          <div class="platform-account">
+            <span>平台账号</span>
+            <strong>{{ username }}</strong>
+            <em>{{ roleLabel }}</em>
+          </div>
+          <p class="wps-section-label">WPS 365 用户信息</p>
           <p v-if="!wpsConfigured" class="pwd-err">
             未检测到 WPS 登录态：请先在本机登录紫金协作客户端，或检查服务端 ~/.wps365/env.json 是否已写入 WPS_SID。
           </p>
@@ -316,7 +387,7 @@ async function submitWpsSync(): Promise<void> {
         <div class="dialog-foot">
           <button type="button" class="ghost" @click="wpsOpen = false">关闭</button>
           <button type="button" class="primary" :disabled="wpsBusy || !wpsConfigured" @click="submitWpsSync">
-            {{ wpsBusy ? "同步中…" : "同步账号" }}
+            {{ wpsBusy ? "同步中…" : wpsProfile ? "重新同步 WPS 信息" : "同步 WPS 用户信息" }}
           </button>
         </div>
       </div>
@@ -342,13 +413,45 @@ async function submitWpsSync(): Promise<void> {
   position: sticky;
   top: 0;
   height: 100vh;
+  transition: width 0.18s ease, padding 0.18s ease;
+}
+.sidebar.collapsed {
+  width: 60px;
+  padding: 14px 8px;
+}
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 16px 8px;
+}
+.sidebar.collapsed .brand-row {
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 12px;
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
   text-decoration: none;
-  padding: 4px 8px 16px;
+  min-width: 0;
+}
+.collapse-btn {
+  flex-shrink: 0;
+}
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 9px 0;
+}
+.sidebar.collapsed .user.compact {
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 2px 2px;
+}
+.nav-badge.warn {
+  background: var(--warn);
+  color: #fff;
 }
 .logo {
   width: 30px;
@@ -495,6 +598,25 @@ async function submitWpsSync(): Promise<void> {
   padding: 10px 4px 2px;
   border-top: 1px solid var(--border);
 }
+.user-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+.user-identity:hover {
+  background: transparent;
+}
+.sidebar.collapsed .user-identity {
+  flex: none;
+}
 .avatar {
   width: 30px;
   height: 30px;
@@ -618,6 +740,34 @@ async function submitWpsSync(): Promise<void> {
 /* ---------- WPS 365 账号弹窗 ---------- */
 .wps-dialog {
   width: 420px;
+}
+.platform-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+.platform-account span {
+  color: var(--text-3);
+}
+.platform-account strong {
+  flex: 1;
+  color: var(--text);
+}
+.platform-account em {
+  color: var(--accent);
+  font-size: 11.5px;
+  font-style: normal;
+}
+.wps-section-label {
+  margin: 2px 0 -4px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
 }
 .wps-profile {
   display: flex;

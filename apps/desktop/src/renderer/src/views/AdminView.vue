@@ -1,20 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import type { AdminProvider, AdminUser } from "../api";
+import { isAsrModel } from "@office/shared";
+import type { AdminProvider, AdminUser, VoiceStatus } from "../api";
 import {
   addProviderModel,
   createAdminProvider,
-  createAdminUser,
   deleteAdminProvider,
   disableProviderModel,
   enableProviderModel,
   fetchProviderModels,
+  getVoiceStatus,
   listAdminProviders,
   listAdminUsers,
   removeProviderModel,
   resetUserPassword,
   setProviderEnabled,
   updateAdminProvider,
+  warmupLocalVoice,
 } from "../api";
 import type { ProviderModelsState } from "../api";
 import { confirmDialog } from "../composables/confirm";
@@ -26,12 +28,15 @@ const tab = ref<Tab>("providers");
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "providers", label: "模型供应商" },
-  { key: "users", label: "成员账号" },
+  { key: "users", label: "用户账号" },
 ];
 
 const providers = ref<AdminProvider[]>([]);
 const users = ref<AdminUser[]>([]);
 const error = ref("");
+const voiceStatus = ref<VoiceStatus | null>(null);
+const checkingVoice = ref(false);
+const warmingUpLocal = ref(false);
 
 const counts = computed<Record<Tab, number>>(() => ({
   providers: providers.value.length,
@@ -40,10 +45,56 @@ const counts = computed<Record<Tab, number>>(() => ({
 
 async function refresh(): Promise<void> {
   try {
-    [providers.value, users.value] = await Promise.all([listAdminProviders(), listAdminUsers()]);
+    [providers.value, users.value, voiceStatus.value] = await Promise.all([
+      listAdminProviders(),
+      listAdminUsers(),
+      getVoiceStatus().catch(() => null),
+    ]);
     error.value = "";
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载失败";
+  }
+}
+
+async function checkVoiceNow(): Promise<void> {
+  checkingVoice.value = true;
+  try {
+    const st = await getVoiceStatus();
+    voiceStatus.value = st;
+    if (st.hasExplicit && st.candidates[0]) {
+      const top = st.candidates[0]!;
+      toast("success", `已显式配置远端 ASR：${top.providerName} / ${top.model}（开源本地引擎随时兜底）`);
+    } else if (st.localFallback?.cached) {
+      toast("success", `当前未显式绑定远端 ASR，已启用开源本地模型（${st.localFallback.model}，本地权重已就绪）兜底`);
+    } else {
+      toast(
+        "info",
+        `当前未显式绑定远端 ASR，将使用开源本地模型（${st.localFallback?.model ?? "Paraformer-zh-small"}）兜底；可点「预热本地引擎」提前加载权重`
+      );
+    }
+  } catch (err) {
+    toastError(err, "检测语音状态失败");
+  } finally {
+    checkingVoice.value = false;
+  }
+}
+
+async function handleWarmupLocal(): Promise<void> {
+  if (warmingUpLocal.value) return;
+  warmingUpLocal.value = true;
+  try {
+    toast("info", "正在准备开源本地语音模型（Paraformer-zh-small ONNX 离线权重，请稍候）…");
+    const res = await warmupLocalVoice();
+    if (voiceStatus.value) {
+      voiceStatus.value = { ...voiceStatus.value, localFallback: res.localFallback };
+    } else {
+      voiceStatus.value = await getVoiceStatus().catch(() => null);
+    }
+    toast("success", `开源本地语音模型（${res.localFallback.model}）已就绪，可随时离线转写`);
+  } catch (err) {
+    toastError(err, "预热本地开源语音模型失败");
+  } finally {
+    warmingUpLocal.value = false;
   }
 }
 
@@ -80,6 +131,8 @@ const eId = ref("");
 const eName = ref("");
 const eBaseUrl = ref("");
 const eKey = ref("");
+const eAsrModel = ref("");
+const ASR_PRESETS = ["FunAudioLLM/SenseVoiceSmall", "whisper-1", "glm-asr", "paraformer-v2"];
 // 模型能力覆盖（P2-5）：JSON 文本，键为模型 ID；空 = 全部用平台默认（128k / 32768 / 无推理）
 const eOverrides = ref("");
 const OVERRIDES_EXAMPLE = `{
@@ -92,6 +145,7 @@ function openEdit(p: AdminProvider): void {
   eName.value = p.name;
   eBaseUrl.value = p.baseUrl;
   eKey.value = "";
+  eAsrModel.value = p.asrModel ?? "";
   const ov = p.modelOverrides ?? {};
   eOverrides.value = Object.keys(ov).length ? JSON.stringify(ov, null, 2) : "";
   showEdit.value = true;
@@ -120,12 +174,25 @@ async function saveEdit(): Promise<void> {
       baseUrl: eBaseUrl.value.trim(),
       apiKey: eKey.value,
       modelOverrides: modelOverrides as AdminProvider["modelOverrides"],
+      asrModel: eAsrModel.value.trim(),
     });
     toast("success", "供应商已更新");
     showEdit.value = false;
     await refresh();
   } catch (err) {
     toastError(err, "更新供应商失败");
+  }
+}
+
+async function setProviderAsrModel(p: AdminProvider, model: string): Promise<void> {
+  const next = p.asrModel === model ? "" : model;
+  try {
+    await updateAdminProvider(p.id, { asrModel: next });
+    p.asrModel = next;
+    voiceStatus.value = await getVoiceStatus().catch(() => voiceStatus.value);
+    toast("success", next ? `已将「${next}」设为「${p.name}」的语音转写模型` : `已清除「${p.name}」的显式语音模型绑定`);
+  } catch (err) {
+    toastError(err, "设置语音转写模型失败");
   }
 }
 
@@ -237,23 +304,6 @@ async function refetchModels(p: AdminProvider): Promise<void> {
   }
 }
 
-// 用户表单
-const uName = ref("");
-const uPass = ref("");
-const uRole = ref<"admin" | "member">("member");
-
-async function addUser(): Promise<void> {
-  if (!uName.value.trim() || !uPass.value) return;
-  try {
-    await createAdminUser(uName.value.trim(), uPass.value, uRole.value);
-    toast("success", `账号「${uName.value.trim()}」已创建`);
-    uName.value = uPass.value = "";
-    await refresh();
-  } catch (err) {
-    toastError(err, "创建账号失败");
-  }
-}
-
 // 重置密码（管理员特权，无需旧密码）
 const rpOpen = ref(false);
 const rpTarget = ref<AdminUser | null>(null);
@@ -286,7 +336,7 @@ onMounted(refresh);
 <template>
   <div class="page">
     <h2 class="page-title">管理后台</h2>
-    <p class="sub">供应商与成员账号在这里维护；专家的创建与删除已移至「专家·技能·连接器」页。</p>
+    <p class="sub">供应商与已注册用户在这里维护；专家的创建与删除已移至「专家·技能·连接器」页。</p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <div class="tabs">
@@ -305,15 +355,48 @@ onMounted(refresh);
 
     <!-- 模型供应商 -->
     <template v-if="tab === 'providers'">
+      <div v-if="voiceStatus" class="voice-status-bar">
+        <div class="vs-main">
+          <span class="vs-icon">🎙️</span>
+          <span v-if="voiceStatus.hasExplicit && voiceStatus.candidates[0]" class="vs-text">
+            远端语音识别已显式绑定：<strong>{{ voiceStatus.candidates[0].providerName }} / {{ voiceStatus.candidates[0].model }}</strong>
+            <span class="vs-sub">（远端异常时由开源本地 <code>{{ voiceStatus.localFallback?.model ?? "Paraformer-zh-small" }}</code> 自动兜底）</span>
+          </span>
+          <span v-else class="vs-text">
+            未显式配置远端 ASR 模型，当前由<strong>开源本地引擎（{{ voiceStatus.localFallback?.model ?? "Paraformer-zh-small" }}）</strong>离线兜底
+            <span class="vs-badge" :class="voiceStatus.localFallback?.cached ? 'ready' : 'pending'">
+              {{ voiceStatus.localFallback?.cached ? "本地权重已就绪" : "首次调用自动拉取" }}
+            </span>
+            <span class="vs-sub">（绝不盲猜未配置的模型名；如需远端 ASR 请在供应商「编辑 / 语音配置」中显式指定）</span>
+          </span>
+        </div>
+        <div class="vs-actions">
+          <button
+            v-if="!voiceStatus.localFallback?.cached || !voiceStatus.localFallback?.ready"
+            type="button"
+            class="mini"
+            :disabled="warmingUpLocal"
+            @click="handleWarmupLocal"
+          >
+            {{ warmingUpLocal ? "下载预热中…" : voiceStatus.localFallback?.cached ? "预热本地引擎" : "下载开源模型" }}
+          </button>
+          <button type="button" class="mini" :disabled="checkingVoice" @click="checkVoiceNow">
+            {{ checkingVoice ? "检测中…" : "检测语音配置" }}
+          </button>
+        </div>
+      </div>
       <div v-if="providers.length" class="provider-list">
         <div v-for="p in providers" :key="p.id" class="provider-card">
           <div class="p-head">
             <div class="p-title">
               <span class="p-name">{{ p.name }}</span>
               <span class="status" :class="p.enabled ? 'completed' : 'cancelled'">{{ p.enabled ? "启用" : "停用" }}</span>
+              <span v-if="p.asrModel" class="asr-badge" title="语音听写与音频转写优先使用该模型（点击清除）" @click="setProviderAsrModel(p, p.asrModel)">
+                🎙️ 语音：{{ p.asrModel }} ✕
+              </span>
             </div>
             <div class="p-actions">
-              <button type="button" @click="openEdit(p)">编辑</button>
+              <button type="button" @click="openEdit(p)">编辑 / 语音配置</button>
               <button type="button" @click="toggleProvider(p)">{{ p.enabled ? "停用" : "启用" }}</button>
               <button type="button" class="danger" @click="removeProvider(p)">删除</button>
             </div>
@@ -344,7 +427,14 @@ onMounted(refresh);
                   <span class="m-tip">创建专家时可选</span>
                 </div>
                 <div v-if="p.enabledModels.length" class="model-list">
-                  <span v-for="m in enabledFiltered(p)" :key="m" class="model-pill on">
+                  <span v-for="m in enabledFiltered(p)" :key="m" class="model-pill on" :class="{ asr: p.asrModel === m }">
+                    <button
+                      v-if="isAsrModel(m)"
+                      type="button"
+                      class="pill-asr"
+                      :title="p.asrModel === m ? '当前默认语音转写模型（点击取消绑定）' : '设为该供应商默认语音转写（ASR）模型'"
+                      @click="setProviderAsrModel(p, m)"
+                    >🎙️</button>
                     {{ m }}
                     <button type="button" class="pill-x" title="停用（保留在候选）" @click="disableModel(p, m)">×</button>
                   </span>
@@ -355,10 +445,17 @@ onMounted(refresh);
               <div v-if="candidateModels(p).length" class="m-block">
                 <div class="m-label">
                   候选模型 <span class="m-count">{{ candidateModels(p).length }}</span>
-                  <span class="m-tip">点击直接添加为可用</span>
+                  <span class="m-tip">点击直接添加为可用；带 🎙️ 图标的可直接设为语音转写模型</span>
                 </div>
                 <div class="model-list">
-                  <span v-for="m in candidatesFiltered(p)" :key="m" class="model-pill cand">
+                  <span v-for="m in candidatesFiltered(p)" :key="m" class="model-pill cand" :class="{ asr: p.asrModel === m }">
+                    <button
+                      v-if="isAsrModel(m)"
+                      type="button"
+                      class="pill-asr"
+                      :title="p.asrModel === m ? '当前默认语音转写模型（点击取消绑定）' : '设为该供应商默认语音转写（ASR）模型'"
+                      @click="setProviderAsrModel(p, m)"
+                    >🎙️</button>
                     <button type="button" class="pill-add" title="添加为可用模型" @click="enableModel(p, m)">
                       + {{ m }}
                     </button>
@@ -391,9 +488,9 @@ onMounted(refresh);
       <p class="hint">兼容 OpenAI Chat Completions 协议的任意端点均可；添加后可拉取该供应商下的模型列表。</p>
     </template>
 
-    <!-- 成员账号 -->
+    <!-- 用户自行注册；管理端只保留账号查看与密码重置 -->
     <section v-show="tab === 'users'" class="card">
-      <h3>成员账号</h3>
+      <h3>用户账号</h3>
       <table v-if="users.length">
         <thead>
           <tr><th>用户名</th><th>角色</th><th>创建时间</th><th></th></tr>
@@ -409,17 +506,8 @@ onMounted(refresh);
           </tr>
         </tbody>
       </table>
-      <div v-else class="empty">还没有成员</div>
-      <form class="grid" @submit.prevent="addUser">
-        <input v-model="uName" placeholder="用户名" required />
-        <input v-model="uPass" type="password" placeholder="初始密码" required />
-        <select v-model="uRole">
-          <option value="member">成员</option>
-          <option value="admin">管理员</option>
-        </select>
-        <button class="primary" type="submit">创建账号</button>
-      </form>
-      <p class="hint">忘记密码不用找旧密码：管理员在上方点「重置密码」直接设新密码。</p>
+      <div v-else class="empty">还没有已注册用户</div>
+      <p class="hint">账号由用户在登录页自行注册；管理员仅在必要时查看账号或重置密码。</p>
     </section>
 
     <!-- 重置密码弹窗 -->
@@ -467,6 +555,26 @@ onMounted(refresh);
             <label class="field">
               <span>API Key</span>
               <input v-model="eKey" type="password" placeholder="留空则不修改" />
+            </label>
+            <label class="field">
+              <span>语音转写（ASR）模型（可选）</span>
+              <input v-model="eAsrModel" placeholder="如 FunAudioLLM/SenseVoiceSmall、whisper-1、glm-asr" />
+              <div class="asr-presets">
+                <span class="preset-label">常用预设：</span>
+                <button
+                  v-for="preset in ASR_PRESETS"
+                  :key="preset"
+                  type="button"
+                  class="preset-chip"
+                  :class="{ active: eAsrModel === preset }"
+                  @click="eAsrModel = eAsrModel === preset ? '' : preset"
+                >
+                  {{ preset }}
+                </button>
+              </div>
+              <span class="field-note">
+                必须显式指定才会调用该供应商的 <code>/audio/transcriptions</code> 端点（不会盲猜未配置的模型）；留空时将自动使用平台内置开源本地 Whisper ONNX 模型离线兜底。
+              </span>
             </label>
             <label class="field">
               <span>模型能力覆盖（JSON，可选）</span>
@@ -562,6 +670,62 @@ onMounted(refresh);
 }
 .card h3 {
   margin: 0;
+}
+.voice-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+.vs-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  flex: 1;
+  min-width: 0;
+}
+.vs-text {
+  line-height: 1.5;
+}
+.vs-sub {
+  color: var(--text-3);
+  font-size: 12px;
+}
+.vs-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  margin: 0 4px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.vs-badge.ready {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.vs-badge.pending {
+  background: var(--surface);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+.vs-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.vs-actions .mini {
+  margin-left: 0;
+}
+.vs-text.warn {
+  color: var(--warn);
 }
 .provider-list {
   display: flex;
@@ -865,6 +1029,60 @@ onMounted(refresh);
   line-height: 1.6;
   resize: vertical;
   white-space: pre;
+}
+.asr-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+  cursor: pointer;
+}
+.asr-badge:hover {
+  opacity: 0.85;
+}
+.model-pill.asr {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-border);
+}
+.pill-asr {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 2px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.asr-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.preset-label {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.preset-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+.preset-chip.active,
+.preset-chip:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent-border);
 }
 .field-note {
   font-size: 12px;

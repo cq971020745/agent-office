@@ -1,6 +1,6 @@
 ---
 name: wps365-skill
-description: WPS 365 办公协作 skill 聚合包，覆盖：通讯录搜人/搜部门与成员；当前登录用户（我是谁、我的个人信息/资料/邮箱/部门）；日历日程、忙闲与会议室预约；已开始会议、录制/纪要/转写/章节；邮件搜索、查看、收发与附件；云文档读取与总结（含 PPT/Word/Excel/PDF/图片/otl，kdocs 与私网 weboffice/l 链接、file_id、本地文件上传后提取）、上传下载、分享与评论；多维表结构/记录/视图；IM 会话与消息；AI 知识库召回；个人待办；轻审批、抄送与操作记录。用户给出云文档/金山文档链接或要求总结/提取文档时，须用 API 读取（勿 curl/浏览器下载预览链接，会得到登录页 HTML），再打开 skills/drive/SKILL.md。
+description: WPS 365 办公协作 skill 聚合包，覆盖：通讯录搜人/搜部门与成员；当前登录用户（我是谁、我的个人信息/资料/邮箱/部门）；日历日程、忙闲与会议室预约；已开始会议、录制/纪要/转写/章节；邮件搜索、查看、收发与附件；云文档读取与总结（含 PPT/Word/Excel/PDF/图片/otl，kdocs 与私网 weboffice/l 链接、file_id；本地附件优先 doc_to_md，用户明确要求时才上传）、上传下载、分享与评论；多维表结构/记录/视图；IM 会话与消息；AI 知识库召回；个人待办；轻审批、抄送与操作记录。用户给出云文档/金山文档链接或要求总结/提取云文档时，须用 API 读取（勿 curl/浏览器下载预览链接，会得到登录页 HTML），再打开 skills/drive/SKILL.md。本地工作区附件用平台工具 doc_to_md，不要为了提取正文上传到云盘。
 ---
 
 # WPS 365 Skill 工具集
@@ -76,7 +76,7 @@ description: WPS 365 办公协作 skill 聚合包，覆盖：通讯录搜人/搜
 | 网页 / 纯文本 / 代码 | `.html` `.txt` `.md` 及代码扩展名 | 读内容 | `drive` |
 | AI 知识库 | （非云盘文件扩展名） | 列空间、片段召回 | **`ai-docs`**（**不是** `drive ai-search`） |
 
-**本地 / 工作区 / 附件文件**：无云 `file_id` 时，先 `drive upload` 上传得 `file_id`，再按上表路由。**不要**把本地路径传给 `get-file-content`；**不要**对 `.xlsx` 使用 `dbsheet schema`。
+**本地 / 工作区 / 附件文件**：优先用平台工具 `doc_to_md` 把 PDF、Word、PPT、Excel 转成工作区隐藏目录 `.parsed/` 下的 Markdown，再用 `workspace_read` 读取。**不要**为了提取正文把本地附件上传到云盘。只有用户明确要求保存到云盘，或文件已经是云文档（有 `file_id` / kdocs 链接）时，才使用 `drive upload` / `get-file-content`。**不要**把本地路径直接传给 `get-file-content`；**不要**对 `.xlsx` 使用 `dbsheet schema`。
 
 更全扩展名列表见 **drive** 子模块 SKILL.md「内容提取支持的文档类型」。
 
@@ -111,7 +111,7 @@ description: WPS 365 办公协作 skill 聚合包，覆盖：通讯录搜人/搜
 
 1. `.dbt` 多维表（结构/记录/视图）：`drive` 得 `file_id` → `dbsheet`
 2. 知识库片段召回：直接 `ai-docs`（**不是** `drive ai-search`）
-3. 其他文档（Word/Excel/PPT/PDF/图片/otl 等）读正文/总结：`drive get-file-content`（本地文件先 `upload`）；**PPT 完整 KDC 必须** `--format kdc --json --include-raw`
+3. 云文档（已有链接或 `file_id`）读正文/总结：`drive get-file-content`；本地附件用 `doc_to_md`，不要先 `upload`。**PPT 完整 KDC 必须** `--format kdc --json --include-raw`
 4. 协作区**留言**：`drive comment-list` / `comment-create`
 5. 正文**内嵌批注**：`drive get-file-content --format kdc --json`
 
@@ -141,7 +141,7 @@ description: WPS 365 办公协作 skill 聚合包，覆盖：通讯录搜人/搜
 | 操作 **.dbt 多维表记录** | `drive get-file-content` 代替增删改查 | 确认 `.dbt` + 记录/schema/视图意图 → `dbsheet` |
 | 仅有 **kdocs 链接** | 不查类型直接抽正文 | `drive` `get`/`link-meta` 定格式 → 再按「文档格式与 skill 分流」 |
 | **PPT 完整结构**（`slide_containers` / `medias`） | `get-file-content --format kdc --json` | **必须**加 `--include-raw`；无 `raw` 键说明参数遗漏，立即重跑 |
-| **本地 PPT/Word/Excel**「帮我处理」 | `get-file-content` 本地路径；或误进 `dbsheet` | `drive upload` → 得 `file_id` → 按扩展名 `get-file-content` |
+| **本地 PPT/Word/Excel**「帮我处理」 | `drive upload` 后再提取；或把本地路径直接传给 `get-file-content` | `doc_to_md`（`outputDir` 放在 `.parsed/`）→ `workspace_read`；仅当用户明确要求上传云盘时才 `drive upload` |
 | `dbsheet` 只有文件名无 `file_id` | 在工作区找本地 `.dbt` | `drive search` 定位云文档 → 再 `dbsheet schema <file_id>`（`file_id` 为**位置参数**） |
 | 给**同事**发消息，只知道名字 | 直接 `im send` | `contacts` 搜人得 `user_id` → `im send --to-user` |
 | 把**云文档发到群聊** | 只发链接文字 | `drive` 取 `link_id` → `im send --type file` |

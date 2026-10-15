@@ -12,6 +12,9 @@ import type {
   ModelOption,
   ModelOverride,
   PagedTasks,
+  CreateScheduledTaskRequest,
+  ScheduledTask,
+  UpdateScheduledTaskRequest,
   SlashSkill,
   SkillDetail,
   SkillInfo,
@@ -22,6 +25,7 @@ import type {
   Task,
   TaskEventEnvelope,
   TaskMessage,
+  ToolApprovalDecision,
   ToolPolicy,
   WpsContacts,
   WpsMention,
@@ -92,6 +96,14 @@ export function login(username: string, password: string) {
 
 export function register(username: string, password: string) {
   return request<AuthResponse>("/auth/register", { method: "POST", body: JSON.stringify({ username, password }) });
+}
+
+/** 登录页忘记密码：仅本机可按用户名设置新密码，成功后直接登录。 */
+export function resetPassword(username: string, newPassword: string) {
+  return request<AuthResponse>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ username, newPassword }),
+  });
 }
 
 /** 修改当前登录用户的密码（无需旧密码，凭当前登录态即可改）。 */
@@ -248,11 +260,27 @@ export function approveTask(id: string, approvedItems: string[], reject = false)
   });
 }
 
-/** ask 级工具调用审批（P2-2）：对等待中的单次工具调用放行或拒绝。 */
-export function approveToolCall(id: string, approved: boolean) {
+/** ask 级工具调用审批：拒绝、仅本次允许，或允许该工具在本任务会话内继续调用。 */
+export function approveToolCall(id: string, decision: ToolApprovalDecision) {
   return request<{ ok: true }>(`/tasks/${id}/tool-approval`, {
     method: "POST",
-    body: JSON.stringify({ approved }),
+    body: JSON.stringify({ decision }),
+  });
+}
+
+export function listSessionGrants(id: string) {
+  return request<{ tools: string[] }>(`/tasks/${id}/session-grants`);
+}
+
+export function revokeSessionGrant(id: string, tool: string) {
+  return request<{ ok: true }>(`/tasks/${id}/session-grants/${encodeURIComponent(tool)}`, { method: "DELETE" });
+}
+
+/** 修改任务标题（重命名） */
+export function renameTask(id: string, title: string) {
+  return request<{ ok: true; title: string }>(`/tasks/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
   });
 }
 
@@ -301,7 +329,32 @@ export function listSlashSkills() {
   return request<SlashSkill[]>("/skills");
 }
 
-/** 语音转文字：multipart 提交录音，服务端按已启用供应商依次尝试 OpenAI 兼容转写端点 */
+export interface VoiceStatus {
+  available: boolean;
+  hasExplicit: boolean;
+  candidates: Array<{ providerId: string; providerName: string; model: string; explicit: boolean }>;
+  localFallback?: {
+    model: string;
+    cached: boolean;
+    loading: boolean;
+    ready: boolean;
+    cacheDir: string;
+  };
+}
+
+/** 查询语音转写候选配置状态 */
+export function getVoiceStatus() {
+  return request<VoiceStatus>("/voice/status");
+}
+
+/** 预热/下载本地开源 Whisper ONNX 语音识别模型 */
+export function warmupLocalVoice() {
+  return request<{ ok: true; localFallback: NonNullable<VoiceStatus["localFallback"]> }>("/voice/local-warmup", {
+    method: "POST",
+  });
+}
+
+/** 语音转文字：multipart 提交录音或音频文件，服务端按优先级尝试 OpenAI 兼容转写端点 */
 export function transcribeVoice(audio: Blob, filename: string) {
   const form = new FormData();
   form.append("audio", audio, filename);
@@ -347,6 +400,8 @@ export interface AdminProvider {
   modelsFetchedAt: string | null;
   /** 按模型 ID 的能力覆盖（contextWindow/maxTokens/reasoning），空 = 全部用平台默认 */
   modelOverrides: Record<string, ModelOverride>;
+  /** 显式指定的语音转写（ASR）模型 ID（空表示自动探测） */
+  asrModel: string;
 }
 
 /** 供应商模型两层列表的快照：models 为候选池，enabledModels 为可用集合。 */
@@ -368,7 +423,16 @@ export function setProviderEnabled(id: string, enabled: boolean) {
 }
 
 /** 编辑供应商基础信息；apiKey 传空字符串表示不修改。 */
-export function updateAdminProvider(id: string, body: { name?: string; baseUrl?: string; apiKey?: string; modelOverrides?: Record<string, ModelOverride> }) {
+export function updateAdminProvider(
+  id: string,
+  body: {
+    name?: string;
+    baseUrl?: string;
+    apiKey?: string;
+    modelOverrides?: Record<string, ModelOverride>;
+    asrModel?: string;
+  }
+) {
   return request<{ ok: true }>(`/admin/providers/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
@@ -686,15 +750,43 @@ export function listAdminUsers() {
   return request<AdminUser[]>("/admin/users");
 }
 
-export function createAdminUser(username: string, password: string, role: "admin" | "member") {
-  return request<{ id: string }>("/admin/users", { method: "POST", body: JSON.stringify({ username, password, role }) });
-}
-
 /** 管理员重置成员密码：不需要旧密码。 */
 export function resetUserPassword(userId: string, password: string) {
   return request<{ ok: true }>(`/admin/users/${userId}/password`, {
     method: "PATCH",
     body: JSON.stringify({ password }),
+  });
+}
+
+// ---------- 定时与自动化巡检任务 ----------
+
+export function listSchedules() {
+  return request<ScheduledTask[]>("/schedules");
+}
+
+export function createSchedule(body: CreateScheduledTaskRequest) {
+  return request<ScheduledTask>("/schedules", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateSchedule(id: string, body: UpdateScheduledTaskRequest) {
+  return request<ScheduledTask>(`/schedules/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteSchedule(id: string) {
+  return request<{ ok: true }>(`/schedules/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function runScheduleNow(id: string) {
+  return request<{ ok: true; taskId: string }>(`/schedules/${id}/run`, {
+    method: "POST",
   });
 }
 

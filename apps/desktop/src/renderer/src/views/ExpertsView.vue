@@ -180,6 +180,9 @@ const cToolPolicy = ref<ToolPolicy>({});
 
 const TOOL_POLICY_BASE_ROWS: { key: string; label: string; desc: string }[] = [
   { key: "workspace_write", label: "工作区写入", desc: "在专家工作区新建/覆盖文件（workspace_write）" },
+  { key: "workspace_edit", label: "工作区局部编辑", desc: "在专家工作区局部替换文件内容（workspace_edit）" },
+  { key: "transcribe_audio", label: "音频文件转写", desc: "将工作区音频文件转写为文本（transcribe_audio）" },
+  { key: "delegate_to_agent", label: "委派其他专家", desc: "将专项子任务委派给其他专家协同执行（delegate_to_agent）" },
   { key: "fetch_url", label: "网页抓取", desc: "从互联网拉取 URL 内容（fetch_url）" },
   { key: "run_code", label: "代码执行", desc: "在隔离沙箱运行代码（run_code，未启用代码执行时无需配置）" },
 ];

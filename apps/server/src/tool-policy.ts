@@ -30,6 +30,28 @@ export function sanitizeToolPolicy(raw: unknown): Record<string, ToolPolicyActio
   return out;
 }
 
+/**
+ * 未在专家策略里点名、但平台默认仍要人工确认的工具。
+ * terminal 直接跑在宿主机上，不能因为专家没配置就变成静默放行。
+ */
+export const DEFAULT_ASK_TOOLS = new Set(["terminal"]);
+
+/**
+ * 本次调用是否还要弹审批。
+ * deny 的工具在注入前已经滤掉，这里不再返回 true。
+ * sessionGranted 为 true 时跳过 ask；调用方应在每次执行时现查，撤销后下一跳立即重新询问。
+ */
+export function toolNeedsApproval(
+  policy: Record<string, ToolPolicyAction>,
+  toolName: string,
+  sessionGranted: boolean
+): boolean {
+  if (policyFor(policy, toolName) === "deny") return false;
+  if (sessionGranted) return false;
+  if (policyFor(policy, toolName) === "ask") return true;
+  return DEFAULT_ASK_TOOLS.has(toolName);
+}
+
 /** 取某工具的策略：精确名 > 连接器通配 > mcp:* > 默认放行（undefined）。 */
 export function policyFor(
   policy: Record<string, ToolPolicyAction>,

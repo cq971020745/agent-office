@@ -23,7 +23,7 @@ const agentId = ref("");
 const prompt = ref("");
 const busy = ref(false);
 
-// ---------- 附件（随任务一起上传，落进任务工作区；支持拖入） ----------
+// ---------- 附件（随任务一起上传，落进任务工作区；支持拖入与 Ctrl+V 粘贴截图/文件） ----------
 const {
   attachments,
   fileInput,
@@ -35,16 +35,23 @@ const {
   onDragEnter,
   onDragLeave,
   onDrop,
+  onPaste,
 } = useAttachments();
 
 const selectedAgent = computed(() => agents.value.find((a) => a.id === agentId.value));
+// 首页任务统计：覆盖全部状态桶（进行中含 pending），确保各分项之和与 tasks.length 一致
 const runningCount = computed(() => tasks.value.filter((t) => t.status === "running" || t.status === "pending").length);
+const awaitingCount = computed(() => tasks.value.filter((t) => t.status === "awaiting_approval").length);
 const doneCount = computed(() => tasks.value.filter((t) => t.status === "completed").length);
+const failedCount = computed(() => tasks.value.filter((t) => t.status === "failed").length);
+const cancelledCount = computed(() => tasks.value.filter((t) => t.status === "cancelled").length);
 
-// ---------- 模型选择（专家与模型解耦，派发时选定） ----------
+// ---------- 模型选择（专家与模型解耦，派发时选定，记住上次偏好） ----------
+const LAST_MODEL_KEY = "agent-office-last-model";
 const selProviderId = ref("");
 const selModelId = ref("");
 const modelOpen = ref(false);
+const modelSearch = ref("");
 const modelTrigger = ref<HTMLElement | null>(null);
 const popStyle = ref<Record<string, string>>({});
 
@@ -54,6 +61,7 @@ function toggleModelOpen(): void {
     const r = modelTrigger.value.getBoundingClientRect();
     const left = Math.max(12, Math.min(r.right - 320, window.innerWidth - 332));
     popStyle.value = { left: `${left}px`, bottom: `${window.innerHeight - r.top + 8}px` };
+    modelSearch.value = "";
   }
   modelOpen.value = !modelOpen.value;
 }
@@ -65,10 +73,21 @@ const selectedProviderName = computed(
   () => modelOptions.value.find((x) => x.providerId === selProviderId.value)?.providerName ?? ""
 );
 const modelCount = computed(() => modelOptions.value.reduce((n, x) => n + x.models.length, 0));
+const filteredModelOptions = computed(() => {
+  const kw = modelSearch.value.trim().toLowerCase();
+  if (!kw) return modelOptions.value;
+  return modelOptions.value
+    .map((g) => ({
+      ...g,
+      models: g.models.filter((m) => m.toLowerCase().includes(kw) || g.providerName.toLowerCase().includes(kw)),
+    }))
+    .filter((g) => g.models.length > 0);
+});
 
 function pickModel(providerId: string, modelId: string): void {
   selProviderId.value = providerId;
   selModelId.value = modelId;
+  localStorage.setItem(LAST_MODEL_KEY, JSON.stringify({ providerId, modelId }));
   modelOpen.value = false;
 }
 
@@ -104,6 +123,19 @@ function pickAgent(id: string): void {
   syncModelWithAgent();
 }
 
+function clearAgent(): void {
+  agentId.value = "";
+}
+
+function openAgentMenuDirect(): void {
+  if (plusTrigger.value) {
+    const r = plusTrigger.value.getBoundingClientRect();
+    plusStyle.value = { left: `${r.left}px`, bottom: `${window.innerHeight - r.top + 8}px` };
+  }
+  plusOpen.value = true;
+  agentMenuOpen.value = true;
+}
+
 function addFilesFromPlus(): void {
   closePlus();
   pickFiles();
@@ -123,7 +155,7 @@ watch(plusOpen, (open) => {
 });
 onBeforeUnmount(() => window.removeEventListener("keydown", onPlusKey));
 
-/** 专家切换：优先预选该专家的默认模型；没有默认或当前未选时取第一个可用模型 */
+/** 专家切换：优先预选该专家的默认模型；没有默认则尝试恢复上次偏好，最后取第一个可用模型 */
 function syncModelWithAgent(): void {
   const a = selectedAgent.value;
   if (a?.providerId && a?.modelId) {
@@ -132,6 +164,21 @@ function syncModelWithAgent(): void {
       selProviderId.value = a.providerId;
       selModelId.value = a.modelId;
       return;
+    }
+  }
+  if (!selProviderId.value || !selModelId.value) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LAST_MODEL_KEY) || "null") as { providerId?: string; modelId?: string } | null;
+      if (saved?.providerId && saved?.modelId) {
+        const ok = modelOptions.value.some((x) => x.providerId === saved.providerId && x.models.includes(saved.modelId!));
+        if (ok) {
+          selProviderId.value = saved.providerId;
+          selModelId.value = saved.modelId;
+          return;
+        }
+      }
+    } catch {
+      // ignore
     }
   }
   if ((!selProviderId.value || !selModelId.value) && modelCount.value) {
@@ -143,6 +190,7 @@ function syncModelWithAgent(): void {
 
 const TEMPLATES = [
   { label: "本周工作周报", text: "帮我写一份本周工作周报，输出为 周报.md，包含本周进展、数据亮点与下周计划。" },
+  { label: "录音转写纪要", text: "调用 transcribe_audio 工具将工作区中的音频文件转写为逐字稿，并整理成结构化 会议纪要.md（含会议结论、要点与待办）。" },
   { label: "产品介绍单页", text: "制作一个产品介绍的单页 HTML（index.html），要求视觉现代、含产品卖点与联系方式。" },
   { label: "会议纪要整理", text: "把以下要点整理成结构化会议纪要，输出 纪要.md：\n" },
   { label: "数据报表分析", text: "读取工作区里的数据文件，做一份分析报告 report.md，给出关键结论与建议。" },
@@ -248,10 +296,15 @@ function onTaKeydown(e: KeyboardEvent): void {
   mention.onTaKeydown(e);
 }
 
-/** 输入/点击时同时探测 / 与 @ 两个弹层（检测正则互斥，不会同时开） */
+/** 输入/点击时同时探测 / 与 @ 两个弹层（检测正则互斥，不会同时开），并自适应输入框高度 */
 function detectPopups(): void {
   slash.detectSlash();
   mention.detectMention();
+  const ta = taRef.value;
+  if (ta) {
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(220, Math.max(76, ta.scrollHeight))}px`;
+  }
 }
 
 /** 语音转写回填：插入光标处，与前后已有内容补空格分隔 */
@@ -282,9 +335,21 @@ onMounted(refresh);
           <span class="num running">{{ runningCount }}</span>
           <span class="label">进行中</span>
         </div>
+        <div v-if="awaitingCount" class="stat">
+          <span class="num awaiting">{{ awaitingCount }}</span>
+          <span class="label">待确认</span>
+        </div>
         <div class="stat">
           <span class="num done">{{ doneCount }}</span>
           <span class="label">已完成</span>
+        </div>
+        <div v-if="failedCount" class="stat">
+          <span class="num failed">{{ failedCount }}</span>
+          <span class="label">失败</span>
+        </div>
+        <div v-if="cancelledCount" class="stat">
+          <span class="num cancelled">{{ cancelledCount }}</span>
+          <span class="label">已取消</span>
         </div>
       </div>
 
@@ -303,10 +368,11 @@ onMounted(refresh);
             ref="taRef"
             v-model="prompt"
             rows="3"
-            placeholder="描述你要完成的任务，输入 @ 引用联系人 / 云文档，输入 / 调用技能…"
+            placeholder="描述你要完成的任务，输入 @ 引用联系人 / 云文档，输入 / 调用技能，支持 Ctrl+V 粘贴截图…"
             @keydown="onTaKeydown"
             @input="detectPopups"
             @click="detectPopups"
+            @paste="onPaste"
           ></textarea>
 
           <!-- @ 弹层：Comate 同款左 tab 栏 + 候选区 + 从云文档选择（与追问输入框共用组件） -->
@@ -316,11 +382,22 @@ onMounted(refresh);
         </div>
 
         <div class="toolbar">
-          <span class="agent-tag" v-if="selectedAgent">
+          <span
+            v-if="selectedAgent"
+            class="agent-tag active-agent"
+            title="点击切换专家"
+            @click="openAgentMenuDirect"
+          >
             <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="2" /><path d="M12 7V4M8 4h8M9 13h.01M15 13h.01" /></svg>
             {{ selectedAgent.name }}
+            <span class="agent-clear" title="切回默认「通用助手」" @click.stop="clearAgent">✕</span>
           </span>
-          <span v-else-if="agents.length" class="agent-tag muted">未选专家，将使用「通用助手」</span>
+          <span
+            v-else-if="agents.length"
+            class="agent-tag muted clickable"
+            title="点击选择特定专家（未选时默认由「通用助手」执行）"
+            @click="openAgentMenuDirect"
+          >未选专家，将使用「通用助手」</span>
           <span v-else class="agent-tag muted">暂无可用专家，请管理员在后台配置</span>
 
           <!-- WorkBuddy 式 + 菜单：添加文件 / 专家（专家不再平铺在页面，收纳到 + 里） -->
@@ -428,8 +505,11 @@ onMounted(refresh);
               <div v-if="modelOpen" class="model-overlay" @click.self="modelOpen = false">
                 <div class="model-pop" :style="popStyle">
                   <div class="pop-head">选择模型 <span class="pop-count">{{ modelCount }} 个可用</span></div>
-                  <div v-if="modelCount" class="pop-list">
-                    <div v-for="g in modelOptions" :key="g.providerId" class="pop-group">
+                  <div v-if="modelCount > 4" class="pop-search-wrap">
+                    <input v-model="modelSearch" class="pop-search" placeholder="搜索模型名称…" />
+                  </div>
+                  <div v-if="filteredModelOptions.length" class="pop-list">
+                    <div v-for="g in filteredModelOptions" :key="g.providerId" class="pop-group">
                       <div class="group-name">{{ g.providerName }}</div>
                       <button
                         v-for="m in g.models"
@@ -444,6 +524,7 @@ onMounted(refresh);
                       </button>
                     </div>
                   </div>
+                  <div v-else-if="modelCount" class="pop-empty">无匹配模型</div>
                   <div v-else class="pop-empty">还没有可用模型，请管理员先在管理后台添加并启用</div>
                   <div class="pop-foot">
                     <button type="button" class="config-link" @click="openModelConfig">
@@ -568,7 +649,10 @@ onMounted(refresh);
   font-variant-numeric: tabular-nums;
 }
 .stat .num.running { color: var(--accent); }
+.stat .num.awaiting { color: var(--warn); }
 .stat .num.done { color: var(--success); }
+.stat .num.failed { color: var(--danger); }
+.stat .num.cancelled { color: var(--text-3); }
 .stat .label {
   font-size: 12.5px;
   color: var(--text-3);
@@ -789,6 +873,33 @@ onMounted(refresh);
 }
 .agent-tag.muted {
   color: var(--text-3);
+}
+.agent-tag.clickable,
+.agent-tag.active-agent {
+  cursor: pointer;
+}
+.agent-tag.active-agent {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.agent-clear {
+  font-size: 11px;
+  padding: 0 3px;
+  border-radius: 50%;
+  color: var(--text-3);
+}
+.agent-clear:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.pop-search-wrap {
+  padding: 0 10px 6px;
+}
+.pop-search {
+  font-size: 12.5px;
+  padding: 5px 10px;
+  border-radius: 8px;
 }
 .attach-strip {
   display: flex;

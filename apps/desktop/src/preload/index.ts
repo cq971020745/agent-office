@@ -4,6 +4,10 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("agentOffice", {
   versions: process.versions,
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke("agent-office:pick-directory"),
-  openPath: (dir: string): Promise<{ ok: boolean; message?: string }> =>
-    ipcRenderer.invoke("agent-office:open-path", dir),
+  openPath: (target: string): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke("agent-office:open-path", target),
+  showItemInFolder: (target: string): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke("agent-office:show-item-in-folder", target),
+  notify: (title: string, body?: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke("agent-office:notify", { title, body }),
 });

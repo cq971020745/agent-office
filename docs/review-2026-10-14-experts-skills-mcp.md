@@ -4,7 +4,7 @@
 
 评审方法：两路并行调研——仓库代码事实基线（专家/技能/MCP 的数据模型、API、注入链路、UI）与主流约定基准（agentskills.io 规范、openai/codex 仓库与 release notes、agents.md、Claude Code / Cursor / VS Code 官方文档、modelcontextprotocol.io）。
 
-> **执行状态（2026-10-14）**：P0-1～P0-4、P1-1～P1-6 与 P2-1～P2-5 已全部落地（P0/P1 见 CHANGELOG「2026-10-14（六）」与 ADR 0005，P2 见「2026-10-14（七）」与 design.md 状态注记七），102 项单测 + 三包 typecheck + 端到端冒烟（15 项）全绿。D1–D9 决策均按推荐采纳，仅 D8（systemPrompt 成员可见性）留待后续批次。
+> **执行状态（2026-10-15）**：P0-1～P0-4、P1-1～P1-6、P2-1～P2-5 以及 D1–D9（含 D8 成员端隐藏 `systemPrompt` 与 §4 MCP 子进程最小化环境变量隔离）已全部 100% 落地。
 
 ## 0 评审基线假设
 

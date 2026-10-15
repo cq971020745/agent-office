@@ -84,13 +84,62 @@ describe("无请求体的 DELETE（Content-Type: json 但 body 为空）", () =>
   });
 });
 
-describe("修改密码（不要求旧密码）", () => {
+describe("用户自助注册与修改密码", () => {
   let token = "";
-  it("注册首个用户拿登录态", async () => {
-    const res = await app.inject({ method: "POST", url: "/auth/register", payload: { username: "admin", password: "old-pass-1" } });
+
+  it("首个注册用户成为管理员", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { username: " admin ", password: "old-pass-1" },
+    });
     assert.equal(res.statusCode, 200);
-    token = res.json().token;
+    const body = res.json();
+    token = body.token;
     assert.ok(token);
+    assert.equal(body.user.username, "admin");
+    assert.equal(body.user.role, "admin");
+  });
+
+  it("后续用户可自行注册且默认为普通成员", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { username: "member", password: "member-pass-1" },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.ok(body.token);
+    assert.equal(body.user.username, "member");
+    assert.equal(body.user.role, "member");
+  });
+
+  it("自助注册的成员可直接登录", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { username: "member", password: "member-pass-1" },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().user.role, "member");
+  });
+
+  it("重复用户名返回 409", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { username: "member", password: "another-pass" },
+    });
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("注册密码少于 6 位返回 400", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { username: "short-password", password: "12345" },
+    });
+    assert.equal(res.statusCode, 400);
   });
 
   it("不传旧密码也能改密", async () => {
@@ -138,5 +187,64 @@ describe("修改密码（不要求旧密码）", () => {
   it("未登录改密返回 401", async () => {
     const res = await app.inject({ method: "POST", url: "/auth/change-password", payload: { newPassword: "whatever-1" } });
     assert.equal(res.statusCode, 401);
+  });
+
+  it("本机可按用户名重置忘记的密码并登录", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/reset-password",
+      payload: { username: " admin ", newPassword: "reset-pass-1" },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.user.username, "admin");
+    assert.equal(body.user.role, "admin");
+    assert.ok(body.token);
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { username: "admin", password: "reset-pass-1" },
+    });
+    assert.equal(loginRes.statusCode, 200);
+    const oldRes = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { username: "admin", password: "new-pass-9" },
+    });
+    assert.equal(oldRes.statusCode, 401);
+  });
+
+  it("重置不存在的用户返回 404", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/reset-password",
+      payload: { username: "nobody", newPassword: "reset-pass-1" },
+    });
+    assert.equal(res.statusCode, 404);
+  });
+
+  it("重置密码少于 6 位返回 400", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/reset-password",
+      payload: { username: "admin", newPassword: "12345" },
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  it("其他电脑不能重置密码", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/reset-password",
+      remoteAddress: "203.0.113.10",
+      payload: { username: "admin", newPassword: "stolen-pass-1" },
+    });
+    assert.equal(res.statusCode, 403);
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { username: "admin", password: "reset-pass-1" },
+    });
+    assert.equal(loginRes.statusCode, 200);
   });
 });

@@ -1,4 +1,8 @@
 FROM node:22-bookworm-slim
+# doc_to_md 的旧版 Word / PPT / Excel 降级转换依赖本机 soffice，正文提取依赖 Python。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 libreoffice-writer libreoffice-calc libreoffice-impress \
+ && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 WORKDIR /app
 COPY pnpm-workspace.yaml package.json .npmrc ./

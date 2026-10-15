@@ -5,5 +5,7 @@ data/
 .env
 *.log
 .DS_Store
+__pycache__/
+*.pyc
 .ui-shots/
 *.tsbuildinfo

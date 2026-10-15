@@ -14,6 +14,7 @@ import { db, now, uuid } from "./db.js";
 import { readAgentsMd } from "./instructions.js";
 import { getMcpTools } from "./mcp.js";
 import { parseModelOverrides, resolveModelCaps } from "./model-caps.js";
+import { skillScriptTool } from "./skill-scripts.js";
 import { buildSkillsPrompt, expandSkillSlash, readSkillTool } from "./skills.js";
 import { publishPi, publishStatus, publishUser } from "./sse.js";
 import { cancelToolApproval, requestToolApproval } from "./tool-approval.js";
@@ -59,13 +60,24 @@ const CODE_EXEC_NOTE =
   "- You have no shell access, but the run_code tool executes a JavaScript/Python script in a network-isolated container with this workspace mounted read-only at /workspace. Use it for computation, data processing, or verifying generated code, then write results with workspace_write.";
 
 /** 组装环境提示词：根据工作区类型、run_code 可用性与是否带附件动态生成。 */
-export function buildPreamble(customWorkspace: boolean, codeExec: boolean, hasUploads = false): string {
+export function buildPreamble(
+  customWorkspace: boolean,
+  codeExec: boolean,
+  hasUploads = false,
+  skillScripts = false
+): string {
   let base = customWorkspace ? USER_DIR_PREAMBLE : OFFICE_PREAMBLE;
   // 平台隔离工作区的提示词默认声称「目录为空」，带附件派发时必须纠正，否则模型会忽略已有文件
   if (hasUploads && !customWorkspace) {
     base = base.replace(
       "Each task gets an isolated workspace directory (currently empty).",
       "Each task gets an isolated workspace directory (the user's uploaded attachments are already saved there)."
+    );
+  }
+  if (skillScripts) {
+    base = base.replace(
+      "\n- When the task is complete",
+      "\n- The run_skill_script tool executes Python scripts bundled inside installed platform skills (see <platform_skills>) on the host, with the skill's own environment (e.g. WPS 365 login credentials) already injected. This reaches office APIs (contacts, IM chats, cloud docs, calendar, mail) that run_code's network-isolated sandbox cannot. Read the skill's docs with read_skill first, then run its scripts through this tool.\n- When the task is complete"
     );
   }
   if (!codeExec) return base;
@@ -165,6 +177,8 @@ function deliverableSinceMs(taskId: string): number | undefined {
 interface TaskJoinRow {
   id: string;
   prompt: string;
+  /** 附件清单与 @ 引用等机器上下文：只随首轮发给模型，展示文本保持用户原文 */
+  context_note: string;
   workspace_path: string;
   custom_workspace: number;
   session_id: string | null;
@@ -182,7 +196,7 @@ interface TaskJoinRow {
 
 // 任务级模型优先（专家与模型解耦），否则回退专家默认绑定
 const SELECT_RUN_ROW = `
-  SELECT t.id, t.prompt, t.workspace_path, t.custom_workspace, t.session_id,
+  SELECT t.id, t.prompt, t.context_note, t.workspace_path, t.custom_workspace, t.session_id,
          a.name AS agent_name, a.system_prompt, a.high_risk, a.tool_policy,
          COALESCE(t.model_id, a.model_id) AS model_id,
          COALESCE(t.provider_id, a.provider_id) AS provider_id,
@@ -264,11 +278,11 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
   const uploadCount = (
     db.prepare("SELECT COUNT(*) AS n FROM task_uploads WHERE task_id = ?").get(row.id) as { n: number }
   ).n;
-  const basePreamble = buildPreamble(!!row.custom_workspace, codeExecAvailable, uploadCount > 0);
-  // 平台级全局指令（AGENTS.md）：叠加在环境提示词之上、专家人设之下，所有专家共享
-  const platformInstructions = readAgentsMd().trim();
   // 渐进披露：系统提示词只带技能清单（专家显式绑定时仅注入绑定的技能），正文按需 read_skill
   const skillsPrompt = buildSkillsPrompt(row.id);
+  const basePreamble = buildPreamble(!!row.custom_workspace, codeExecAvailable, uploadCount > 0, !!skillsPrompt);
+  // 平台级全局指令（AGENTS.md）：叠加在环境提示词之上、专家人设之下，所有专家共享
+  const platformInstructions = readAgentsMd().trim();
   const loader = new DefaultResourceLoader({
     cwd: row.workspace_path,
     agentDir: paths.agentDir,
@@ -307,7 +321,7 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
   const codeTools = codeExecAvailable ? await codeExecToolIfAvailable(row.workspace_path) : [];
   if (codeTools.length) console.log(`[runner] 任务 ${row.id} 注入 run_code（Docker 隔离代码执行）`);
 
-  const skillTools = skillsPrompt ? [readSkillTool()] : [];
+  const skillTools = skillsPrompt ? [readSkillTool(), skillScriptTool()] : [];
 
   // 专家级工具策略（P2-2）：deny 的工具注入前直接过滤；ask 的包一层审批等待
   const policy = parseToolPolicy(row.tool_policy);
@@ -437,6 +451,12 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
     // 模型单轮输出撞到长度上限（stopReason:"length"）时自动续跑，最多 3 轮；
     // 截断不是成功也不是模型错误，直接判完成会得到"任务完成但什么都没做"的假象
     for (let round = 1; ; round++) {
+      // 会话建立窗口期（ensureSession 尚未返回）收到的取消/打断请求：prompt 前直接落定，不再发起新一轮
+      if (cancelRequested.has(row.id)) {
+        setTaskStatus(row.id, "cancelled");
+        publishStatus(row.id, "cancelled");
+        return;
+      }
       await session.prompt(promptText);
 
       // prompt() 正常返回不代表成功：模型错误以 stopReason:"error" 落在最后一条 assistant 消息里
@@ -513,8 +533,10 @@ export async function startTask(taskId: string): Promise<void> {
   if (!row) return;
   insertUserMessage(taskId, row.prompt);
   publishUser(taskId, row.prompt);
-  // 斜杠调用（如 /周报生成 主题）：落库与展示保留原文，发给模型的是技能正文展开
-  const userPrompt = expandSkillSlash(row.prompt);
+  // 斜杠调用（如 /周报生成 主题）：落库与展示保留原文，发给模型的是技能正文展开；
+  // context_note（附件清单/@ 引用）只随首轮发给模型，展示文本保持用户原文
+  const context = row.context_note ? `\n\n${row.context_note}` : "";
+  const userPrompt = expandSkillSlash(row.prompt) + context;
   const planPhase = !!row.high_risk;
   const firstPrompt = planPhase ? `${HIGH_RISK_PLAN_INSTRUCTION}
 
@@ -533,8 +555,9 @@ export async function startTask(taskId: string): Promise<void> {
 /**
  * 在既有任务上继续一轮对话（多轮追问）。
  * 同步完成校验并启动异步轮次；返回值供路由映射 HTTP 状态。
+ * contextNote（附件清单等机器上下文）只随本轮发给模型，展示文本保持用户原文。
  */
-export function sendMessage(taskId: string, prompt: string): "ok" | "busy" | "not-found" {
+export function sendMessage(taskId: string, prompt: string, contextNote = ""): "ok" | "busy" | "not-found" {
   const row = getRunRow(taskId);
   if (!row) return "not-found";
   const current = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string } | undefined;
@@ -544,10 +567,11 @@ export function sendMessage(taskId: string, prompt: string): "ok" | "busy" | "no
   insertUserMessage(taskId, prompt);
   publishUser(taskId, prompt);
   beginTurn(taskId);
+  const context = contextNote ? `\n\n${contextNote}` : "";
   void (async () => {
     try {
       const session = await ensureSession(row);
-      await runTurn(row, session, expandSkillSlash(prompt));
+      await runTurn(row, session, expandSkillSlash(prompt) + context);
     } catch (err) {
       failTurn(taskId, err);
     } finally {
@@ -592,11 +616,29 @@ ${list}
 
 /** 取消正在执行的当前轮次。返回 false 表示没有正在执行的轮次。 */
 export function cancelTask(taskId: string): boolean {
-  const session = sessions.get(taskId);
-  if (!session || !busy.has(taskId)) return false;
+  if (!busy.has(taskId)) return false;
+  // busy 但会话尚未建立（ensureSession 窗口）也要登记取消意图：runTurn 轮首检查后直接落定
   cancelRequested.add(taskId);
-  void session.abort();
+  const session = sessions.get(taskId);
+  if (session) void session.abort();
   return true;
+}
+
+/** 等待任务退出忙碌（打断后接力发新消息用）；超时返回 false。 */
+export function waitTaskIdle(taskId: string, timeoutMs = 30_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (!busy.has(taskId)) {
+        clearInterval(timer);
+        resolve(true);
+      } else if (Date.now() - started > timeoutMs) {
+        clearInterval(timer);
+        resolve(false);
+      }
+    }, 120);
+    timer.unref();
+  });
 }
 
 /** 服务启动时调用：上一进程遗留的 pending/running 任务已无活动会话，标记为失败；并为没有消息记录的旧任务补一条用户消息。 */

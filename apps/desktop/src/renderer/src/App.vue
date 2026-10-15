@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import type { Task } from "@office/shared";
-import { getRole, getToken, getUsername, listTasks, setToken, changePassword } from "./api";
+import type { Task, WpsProfile } from "@office/shared";
+import { getRole, getToken, getUsername, listTasks, setToken, changePassword, getWpsMe, syncWpsAccount } from "./api";
 import { timeAgo } from "./utils/format";
 import Toasts from "./components/Toasts.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
@@ -121,6 +121,40 @@ async function submitPwd(): Promise<void> {
     pwdBusy.value = false;
   }
 }
+
+// ---------- WPS 365 账号（同步按钮跑服务端 user-current 脚本） ----------
+const wpsOpen = ref(false);
+const wpsBusy = ref(false);
+const wpsError = ref("");
+const wpsConfigured = ref(true);
+const wpsProfile = ref<WpsProfile | null>(null);
+
+async function openWps(): Promise<void> {
+  wpsError.value = "";
+  wpsOpen.value = true;
+  try {
+    const res = await getWpsMe();
+    wpsConfigured.value = res.configured;
+    wpsProfile.value = res.profile;
+  } catch {
+    wpsError.value = "无法获取账号状态，请稍后重试";
+  }
+}
+
+async function submitWpsSync(): Promise<void> {
+  wpsBusy.value = true;
+  wpsError.value = "";
+  try {
+    const res = await syncWpsAccount();
+    wpsConfigured.value = res.configured;
+    wpsProfile.value = res.profile;
+    toast("success", `已同步 WPS 365 账号：${res.profile.name}`);
+  } catch (err) {
+    wpsError.value = err instanceof Error ? err.message : "同步失败，请稍后重试";
+  } finally {
+    wpsBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -197,6 +231,14 @@ async function submitPwd(): Promise<void> {
         </button>
         <button
           class="icon-btn"
+          title="WPS 365 账号"
+          aria-label="WPS 365 账号"
+          @click="openWps"
+        >
+          <svg class="icon" viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 1 0-.88-8.92 6 6 0 0 0-11.4 1.98A3.5 3.5 0 0 0 6 19z" /></svg>
+        </button>
+        <button
+          class="icon-btn"
           title="修改密码"
           aria-label="修改密码"
           @click="openPwd"
@@ -241,6 +283,43 @@ async function submitPwd(): Promise<void> {
           <button type="submit" class="primary" :disabled="pwdBusy">{{ pwdBusy ? "提交中…" : "确认修改" }}</button>
         </div>
       </form>
+    </div>
+    <!-- WPS 365 账号弹窗 -->
+    <div v-if="wpsOpen" class="overlay" @click.self="wpsOpen = false">
+      <div class="dialog wps-dialog" role="dialog" aria-label="WPS 365 账号">
+        <div class="dialog-head">
+          <h3>WPS 365 账号</h3>
+          <button type="button" class="icon-btn" title="关闭" @click="wpsOpen = false">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div class="dialog-body">
+          <p v-if="!wpsConfigured" class="pwd-err">
+            未检测到 WPS 登录态：请先在本机登录紫金协作客户端，或检查服务端 ~/.wps365/env.json 是否已写入 WPS_SID。
+          </p>
+          <template v-if="wpsProfile">
+            <div class="wps-profile">
+              <span class="wps-avatar">{{ wpsProfile.name.slice(0, 1) }}</span>
+              <div class="wps-meta">
+                <strong>{{ wpsProfile.name }}</strong>
+                <span>{{ wpsProfile.deptPath || wpsProfile.deptName || "—" }}</span>
+                <span v-if="wpsProfile.phone || wpsProfile.email">
+                  {{ [wpsProfile.phone, wpsProfile.email].filter(Boolean).join(" · ") }}
+                </span>
+              </div>
+            </div>
+            <p class="wps-synced-at">上次同步：{{ new Date(wpsProfile.syncedAt).toLocaleString() }}</p>
+          </template>
+          <p v-else-if="wpsConfigured" class="wps-hint">尚未同步。点击下方按钮获取当前登录的 WPS 365 账号。</p>
+          <p v-if="wpsError" class="pwd-err">{{ wpsError }}</p>
+        </div>
+        <div class="dialog-foot">
+          <button type="button" class="ghost" @click="wpsOpen = false">关闭</button>
+          <button type="button" class="primary" :disabled="wpsBusy || !wpsConfigured" @click="submitWpsSync">
+            {{ wpsBusy ? "同步中…" : "同步账号" }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -535,5 +614,43 @@ async function submitPwd(): Promise<void> {
 }
 .ghost {
   background: transparent;
+}
+/* ---------- WPS 365 账号弹窗 ---------- */
+.wps-dialog {
+  width: 420px;
+}
+.wps-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.wps-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent-weak, rgba(59, 130, 246, 0.15));
+  color: var(--accent, #3b82f6);
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.wps-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--text-2);
+  min-width: 0;
+}
+.wps-meta strong {
+  font-size: 15px;
+  color: var(--text-1);
+}
+.wps-synced-at,
+.wps-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-3, var(--text-2));
 }
 </style>

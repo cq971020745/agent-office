@@ -1,0 +1,25 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: user-current
+run_py: skills/user-current/run.py
+schema_version: cli_reference.v1
+subcommands:
+  me:
+    usage: run.py me [-h] [--page-size PAGE_SIZE]
+    positional: []
+    options:
+    - --page-size
+    example: python skills/user-current/run.py me
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  me_base:
+    usage: run.py me_base [-h]
+    positional: []
+    options: []
+    example: python skills/user-current/run.py me_base
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id

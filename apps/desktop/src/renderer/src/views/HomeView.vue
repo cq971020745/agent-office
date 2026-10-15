@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { AgentConfig, ModelOption, Task } from "@office/shared";
 import { createTask, createTaskWithFiles, listAgents, listModelOptions, listTasks } from "../api";
 import { toast, toastError } from "../composables/toast";
 import { MAX_FILES, useAttachments } from "../composables/attachments";
+import { useMentions } from "../composables/useMentions";
+import { useSlashSkills } from "../composables/useSlashSkills";
 import { formatSize, timeAgo } from "../utils/format";
+import AgentAvatar from "../components/AgentAvatar.vue";
+import MentionChips from "../components/MentionChips.vue";
+import MentionPopup from "../components/MentionPopup.vue";
+import SkillPopup from "../components/SkillPopup.vue";
+import VoiceDictate from "../components/VoiceDictate.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -70,6 +77,52 @@ function openModelConfig(): void {
   void router.push("/admin");
 }
 
+// ---------- 输入框左侧 + 菜单（WorkBuddy 式）：添加文件 / 专家（专家收纳进二级菜单，不再平铺在 hero） ----------
+const plusOpen = ref(false);
+const agentMenuOpen = ref(false);
+const plusTrigger = ref<HTMLElement | null>(null);
+const plusStyle = ref<Record<string, string>>({});
+
+function togglePlus(): void {
+  plusOpen.value = !plusOpen.value;
+  agentMenuOpen.value = false;
+  if (plusOpen.value && plusTrigger.value) {
+    const r = plusTrigger.value.getBoundingClientRect();
+    plusStyle.value = { left: `${r.left}px`, bottom: `${window.innerHeight - r.top + 8}px` };
+  }
+}
+
+function closePlus(): void {
+  plusOpen.value = false;
+  agentMenuOpen.value = false;
+}
+
+/** 选中专家：预选其默认模型（没有则保留当前选择），关闭菜单 */
+function pickAgent(id: string): void {
+  agentId.value = id;
+  closePlus();
+  syncModelWithAgent();
+}
+
+function addFilesFromPlus(): void {
+  closePlus();
+  pickFiles();
+}
+
+function goExperts(): void {
+  closePlus();
+  void router.push("/experts");
+}
+
+function onPlusKey(e: KeyboardEvent): void {
+  if (e.key === "Escape") closePlus();
+}
+watch(plusOpen, (open) => {
+  if (open) window.addEventListener("keydown", onPlusKey);
+  else window.removeEventListener("keydown", onPlusKey);
+});
+onBeforeUnmount(() => window.removeEventListener("keydown", onPlusKey));
+
 /** 专家切换：优先预选该专家的默认模型；没有默认或当前未选时取第一个可用模型 */
 function syncModelWithAgent(): void {
   const a = selectedAgent.value;
@@ -122,12 +175,10 @@ function clearDirectory(): void {
 async function refresh(): Promise<void> {
   try {
     agents.value = await listAgents();
-    // 从专家页「发任务」跳转过来时按 query 预选
+    // 从专家页「发任务」跳转过来时按 query 预选；其余情况不默认选中，由用户显式挑选专家
     const fromQuery = typeof route.query.agent === "string" ? route.query.agent : "";
     if (fromQuery && agents.value.some((a) => a.id === fromQuery)) {
       agentId.value = fromQuery;
-    } else if (!agentId.value && agents.value.length) {
-      agentId.value = agents.value[0]!.id;
     }
   } catch (err) {
     toastError(err, "加载专家失败");
@@ -146,7 +197,8 @@ async function refresh(): Promise<void> {
 }
 
 async function submit(): Promise<void> {
-  if (!agentId.value || !prompt.value.trim() || busy.value) return;
+  if (!prompt.value.trim() || busy.value) return;
+  // 专家非必选：不选时由服务端落到内置「通用助手」
   if (!selProviderId.value || !selModelId.value) {
     toast("error", "请先选择模型");
     modelOpen.value = true;
@@ -155,13 +207,18 @@ async function submit(): Promise<void> {
   busy.value = true;
   try {
     const model = { providerId: selProviderId.value, modelId: selModelId.value };
+    const mentions = [...mention.pendingMentions.value];
     const { id } = attachments.value.length
       ? await createTaskWithFiles(agentId.value, prompt.value.trim(), [...attachments.value], {
           model,
           workspaceDir: dirPath.value || undefined,
+          mentions,
         })
-      : await createTask(agentId.value, prompt.value.trim(), undefined, model, dirPath.value || undefined);
+      : await createTask(agentId.value, prompt.value.trim(), undefined, model, dirPath.value || undefined, mentions);
     prompt.value = "";
+    mention.pendingMentions.value = [];
+    slash.state.open = false;
+    mention.state.open = false;
     resetAttachments();
     await router.push(`/tasks/${id}`);
   } catch (err) {
@@ -177,6 +234,35 @@ function useTemplate(text: string): void {
 
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") void submit();
+}
+
+// ---------- @ 引用（Comate 式：弹层候选 + 通讯录分组 + 云文档选择器，追问输入框共用同一套） ----------
+const taRef = ref<HTMLTextAreaElement | null>(null);
+const mention = useMentions({ prompt, taRef, onFallbackKey: onKeydown });
+// ---------- / 斜杠技能（键入 / 弹技能候选，与 @ 弹层互斥） ----------
+const slash = useSlashSkills({ prompt, taRef });
+
+/** 弹层键盘链：/ 技能弹层优先，其次 @ 引用弹层，最后宿主（Ctrl+Enter 派发） */
+function onTaKeydown(e: KeyboardEvent): void {
+  if (slash.onKeydown(e)) return;
+  mention.onTaKeydown(e);
+}
+
+/** 输入/点击时同时探测 / 与 @ 两个弹层（检测正则互斥，不会同时开） */
+function detectPopups(): void {
+  slash.detectSlash();
+  mention.detectMention();
+}
+
+/** 语音转写回填：插入光标处，与前后已有内容补空格分隔 */
+function appendVoiceText(text: string): void {
+  const ta = taRef.value;
+  const pos = ta?.selectionStart ?? prompt.value.length;
+  const before = prompt.value.slice(0, pos);
+  const after = prompt.value.slice(pos);
+  const glue = (s: string, re: RegExp) => (s && !re.test(s) ? " " : "");
+  prompt.value = before + glue(before, /\s$/) + text + glue(after, /^\s/) + after;
+  ta?.focus();
 }
 
 onMounted(refresh);
@@ -202,20 +288,6 @@ onMounted(refresh);
         </div>
       </div>
 
-      <div v-if="agents.length" class="chips">
-        <button
-          v-for="a in agents"
-          :key="a.id"
-          type="button"
-          class="chip"
-          :class="{ active: a.id === agentId }"
-          @click="agentId = a.id"
-        >
-          <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="2" /><path d="M12 7V4M8 4h8M9 13h.01M15 13h.01M9.5 16.5h5" /></svg>
-          {{ a.name }}
-        </button>
-      </div>
-
       <div
         class="prompt-card"
         :class="{ 'drop-hover': dragging }"
@@ -224,28 +296,102 @@ onMounted(refresh);
         @dragleave.prevent="onDragLeave"
         @drop.prevent="onDrop"
       >
-        <textarea
-          v-model="prompt"
-          rows="3"
-          placeholder="描述你要完成的任务，可附上文件或直接拖入，例如：写一个 hello world 的 HTML 页面…"
-          @keydown="onKeydown"
-        ></textarea>
+        <MentionChips :api="mention" />
+
+        <div class="ta-wrap">
+          <textarea
+            ref="taRef"
+            v-model="prompt"
+            rows="3"
+            placeholder="描述你要完成的任务，输入 @ 引用联系人 / 云文档，输入 / 调用技能…"
+            @keydown="onTaKeydown"
+            @input="detectPopups"
+            @click="detectPopups"
+          ></textarea>
+
+          <!-- @ 弹层：Comate 同款左 tab 栏 + 候选区 + 从云文档选择（与追问输入框共用组件） -->
+          <MentionPopup :api="mention" />
+          <!-- / 斜杠技能弹层：键入 / 列出可调用技能 -->
+          <SkillPopup :api="slash" />
+        </div>
+
         <div class="toolbar">
           <span class="agent-tag" v-if="selectedAgent">
             <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="2" /><path d="M12 7V4M8 4h8M9 13h.01M15 13h.01" /></svg>
             {{ selectedAgent.name }}
           </span>
+          <span v-else-if="agents.length" class="agent-tag muted">未选专家，将使用「通用助手」</span>
           <span v-else class="agent-tag muted">暂无可用专家，请管理员在后台配置</span>
 
-          <button
-            type="button"
-            class="attach-btn"
-            :title="`添加附件（最多 ${MAX_FILES} 个，单个 ≤ 20MB）`"
-            @click="pickFiles"
-          >
-            <svg class="icon" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.5 8.35l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
-          </button>
+          <!-- WorkBuddy 式 + 菜单：添加文件 / 专家（专家不再平铺在页面，收纳到 + 里） -->
+          <div class="plus-wrap">
+            <button
+              type="button"
+              ref="plusTrigger"
+              class="plus-btn"
+              :class="{ open: plusOpen }"
+              title="添加文件 / 选择专家"
+              @click="togglePlus"
+            >
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+
+            <teleport to="body">
+              <div v-if="plusOpen" class="plus-overlay" @mousedown.self="closePlus">
+                <div class="plus-pop" :style="plusStyle">
+                  <button type="button" class="plus-item" :title="`添加附件（最多 ${MAX_FILES} 个，单个 ≤ 20MB）`" @click="addFilesFromPlus">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.5 8.35l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+                    添加文件
+                  </button>
+                  <div class="plus-sep"></div>
+                  <button
+                    type="button"
+                    class="plus-item"
+                    :class="{ open: agentMenuOpen }"
+                    @click="agentMenuOpen = !agentMenuOpen"
+                    @mouseenter="agentMenuOpen = true"
+                  >
+                    <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="2" /><path d="M12 7V4M8 4h8M9 13h.01M15 13h.01M9.5 16.5h5" /></svg>
+                    专家
+                    <svg class="caret" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></svg>
+                  </button>
+                  <!-- 专家二级菜单：头像 + 名称 + 选中勾，底部「召唤更多专家」跳专家页 -->
+                  <div v-if="agentMenuOpen" class="agent-sub" @mouseleave="agentMenuOpen = false">
+                    <div class="sub-head">
+                      选择专家
+                      <span v-if="!agentId" class="sub-hint">未选则用通用助手</span>
+                    </div>
+                    <div class="sub-list">
+                      <button
+                        v-for="a in agents"
+                        :key="a.id"
+                        type="button"
+                        class="agent-item"
+                        :class="{ active: a.id === agentId }"
+                        :title="a.description"
+                        @click="pickAgent(a.id)"
+                      >
+                        <AgentAvatar :name="a.name" :size="22" />
+                        <span class="a-name">{{ a.name }}</span>
+                        <svg v-if="a.id === agentId" class="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></svg>
+                      </button>
+                      <div v-if="!agents.length" class="sub-empty">暂无可用专家</div>
+                    </div>
+                    <div class="sub-foot">
+                      <button type="button" class="plus-item more-agents" @click="goExperts">
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                        召唤更多专家
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </teleport>
+          </div>
           <input ref="fileInput" type="file" multiple hidden @change="onFilesPicked" />
+
+          <!-- 语音输入：点击录音 → 再点结束并转写回填 -->
+          <VoiceDictate @text="appendVoiceText" />
 
           <button
             type="button"
@@ -313,7 +459,7 @@ onMounted(refresh);
           <button
             class="send"
             type="button"
-            :disabled="busy || !prompt.trim() || !agentId"
+            :disabled="busy || !prompt.trim()"
             :title="busy ? '派发中…' : '派发任务（Ctrl+Enter）'"
             @click="submit"
           >
@@ -427,36 +573,172 @@ onMounted(refresh);
   font-size: 12.5px;
   color: var(--text-3);
 }
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-}
-.chip {
+/* 输入框左侧 + 菜单（WorkBuddy 式） */
+.plus-wrap {
+  position: relative;
+  flex-shrink: 0;
   display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border-radius: 999px;
-  padding: 7px 16px;
-  font-size: 13.5px;
-  font-weight: 500;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text-2);
 }
-.chip:hover {
-  border-color: var(--text-3);
+.plus-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  border: none;
+  box-shadow: none;
+  flex-shrink: 0;
+}
+.plus-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.plus-btn .icon {
+  width: 15px;
+  height: 15px;
+  transition: transform 0.15s ease;
+}
+.plus-btn.open {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.plus-btn.open .icon {
+  transform: rotate(45deg);
+}
+.plus-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+.plus-pop {
+  position: fixed;
+  width: 190px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+  animation: rise 0.16s ease-out;
+}
+.plus-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.plus-item:hover,
+.plus-item.open {
+  background: var(--surface-2);
   color: var(--text);
 }
-.chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+.plus-item .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.plus-item .caret {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.plus-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+/* 专家二级菜单：锚在「专家」行右侧（WorkBuddy 同款右侧飞出） */
+.agent-sub {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: -6px;
+  width: 248px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+  animation: rise 0.16s ease-out;
+}
+.sub-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 10px 4px;
+  font-size: 12.5px;
   font-weight: 600;
 }
-.chip.active .icon {
-  color: var(--on-accent);
+.sub-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.sub-list {
+  max-height: 264px;
+  overflow-y: auto;
+}
+.agent-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.agent-item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.agent-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.agent-item .a-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-item .check {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.sub-empty {
+  padding: 12px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  text-align: center;
+}
+.sub-foot {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding: 4px;
+}
+.more-agents .icon {
+  color: var(--accent);
 }
 .prompt-card {
   background: var(--surface);
@@ -468,6 +750,7 @@ onMounted(refresh);
   flex-direction: column;
   gap: 10px;
   transition: box-shadow 0.2s, border-color 0.2s;
+  position: relative;
 }
 .prompt-card:focus-within {
   border-color: var(--accent-border);
@@ -506,27 +789,6 @@ onMounted(refresh);
 }
 .agent-tag.muted {
   color: var(--text-3);
-}
-.attach-btn {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text-3);
-  border: none;
-  box-shadow: none;
-  flex-shrink: 0;
-}
-.attach-btn:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.attach-btn .icon {
-  width: 14px;
-  height: 14px;
 }
 .attach-strip {
   display: flex;

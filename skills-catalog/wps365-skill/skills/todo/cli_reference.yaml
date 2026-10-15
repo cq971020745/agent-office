@@ -1,0 +1,100 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: todo
+run_py: skills/todo/run.py
+schema_version: cli_reference.v1
+subcommands:
+  create:
+    usage: run.py create [-h] [--desc DESC] [--due DUE] [--status {todo,finish}]
+    positional:
+    - title
+    options:
+    - --confirm
+    - --desc
+    - --due
+    - --status
+    example: python skills/todo/run.py create <title>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --title
+  delete:
+    usage: run.py delete [-h] [--confirm] task_id
+    positional:
+    - task_id
+    options:
+    - --confirm
+    example: python skills/todo/run.py delete <task_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --task-id
+    - --task_id
+  done:
+    usage: run.py done [-h] [--confirm] task_id
+    positional:
+    - task_id
+    options:
+    - --confirm
+    example: python skills/todo/run.py done <task_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --task-id
+    - --task_id
+  get:
+    usage: run.py get [-h] task_id
+    positional:
+    - task_id
+    options: []
+    example: python skills/todo/run.py get <task_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --task-id
+    - --task_id
+  list:
+    usage: run.py list [-h] [--status {todo,finish}] [--page-size PAGE_SIZE]
+    positional: []
+    options:
+    - --page-size
+    - --page-token
+    - --status
+    example: python skills/todo/run.py list
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  undone:
+    usage: run.py undone [-h] [--confirm] task_id
+    positional:
+    - task_id
+    options:
+    - --confirm
+    example: python skills/todo/run.py undone <task_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --task-id
+    - --task_id
+  update:
+    usage: run.py update [-h] [--title TITLE] [--desc DESC] [--due DUE]
+    positional:
+    - task_id
+    options:
+    - --confirm
+    - --desc
+    - --due
+    - --title
+    example: python skills/todo/run.py update <task_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --task-id
+    - --task_id

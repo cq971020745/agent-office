@@ -236,6 +236,79 @@ export function migrate(): void {
       last_used_at TEXT
     );
   `);
+
+  // V11：WPS 365 当前账号缓存（设置页「同步」按钮写入，@ 弹层与任务注入读取）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wps_profile (
+      user_id TEXT PRIMARY KEY REFERENCES users(id),
+      profile TEXT NOT NULL,
+      synced_at TEXT NOT NULL
+    );
+  `);
+
+  // V12：任务上下文附注列——附件清单与 @ 引用只注入模型首轮，不再拼进展示用 prompt。
+  // 顺带清洗本批之前已把 <wps_mentions> 块写进 prompt / 首条用户消息的历史任务。
+  {
+    const stripMentions = (text: string): string =>
+      text.replace(/\n*<wps_mentions>[\s\S]*?<\/wps_mentions>\n*/g, "\n").trim();
+    const cols = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "context_note")) {
+      db.exec("ALTER TABLE tasks ADD COLUMN context_note TEXT NOT NULL DEFAULT ''");
+    }
+    const dirtyTasks = db
+      .prepare("SELECT id, prompt FROM tasks WHERE prompt LIKE '%<wps_mentions>%'")
+      .all() as { id: string; prompt: string }[];
+    for (const t of dirtyTasks) {
+      const cleaned = stripMentions(t.prompt);
+      db.prepare("UPDATE tasks SET prompt = ? WHERE id = ?").run(cleaned, t.id);
+      db.prepare(
+        "UPDATE task_messages SET content = ? WHERE task_id = ? AND role = 'user' AND content LIKE '%<wps_mentions>%'"
+      ).run(cleaned, t.id);
+    }
+  }
+}
+
+// 内置默认专家「通用助手」：专家非必选——派发任务时未指定专家则落到这里。
+// 模型默认取最早创建的可用供应商的可用模型；没有可用供应商时留空，
+// 由「创建任务须显式选模型」的既有校验兜底提示。
+export function ensureDefaultAgent(): void {
+  const DEFAULT_ID = "builtin-general-assistant";
+  const exists = db.prepare("SELECT id FROM agents WHERE id = ?").get(DEFAULT_ID);
+  if (exists) return;
+  const provider = db
+    .prepare(
+      "SELECT p.id AS provider_id, p.enabled_models FROM model_providers p WHERE p.enabled = 1 ORDER BY p.created_at DESC LIMIT 1"
+    )
+    .get() as { provider_id: string; enabled_models: string } | undefined;
+  const modelId = provider ? (parseFirstModel(provider.enabled_models) ?? "") : "";
+  db.prepare(
+    "INSERT INTO agents (id, name, description, system_prompt, provider_id, model_id, tags, folder, high_risk, tool_policy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?)"
+  ).run(
+    DEFAULT_ID,
+    "通用助手",
+    "内置默认专家：未选择专家时的兜底，可处理日常问答、写作、查询等通用办公任务",
+    [
+      "你是「通用助手」，Agent Office 的内置默认专家。",
+      "职责：在用户没有指定专家时承接任务，覆盖日常办公问答、文案撰写、资料整理、信息查询等通用场景。",
+      "行为准则：直接解决问题，不推荐其他专家；任务超出能力或需要 WPS 365 数据时，按技能说明加载并使用对应技能。",
+    ].join("\n"),
+    provider?.provider_id ?? null,
+    modelId || null,
+    JSON.stringify(["内置"]),
+    "{}",
+    now()
+  );
+  console.log(`[agents] 已创建内置默认专家「通用助手」`);
+}
+
+function parseFirstModel(enabledModels: string): string | undefined {
+  try {
+    const arr: unknown = JSON.parse(enabledModels);
+    if (Array.isArray(arr) && typeof arr[0] === "string") return arr[0];
+  } catch {
+    // 非法 JSON 视为未配置
+  }
+  return undefined;
 }
 
 export const uuid = () => randomUUID();

@@ -1,0 +1,4 @@
+interface:
+  display_name: "WPS 365 Mail"
+  short_description: "Handle WPS 365 mail search, reading, sending, and drafts"
+  default_prompt: "Use $mail to search, read, draft, reply to, forward, or send WPS 365 emails."

@@ -18,8 +18,14 @@ import { renderMarkdown } from "../utils/markdown";
 import { formatSize, previewKind, timeAgo } from "../utils/format";
 import { toast, toastError } from "../composables/toast";
 import { MAX_FILES, useAttachments } from "../composables/attachments";
+import { useMentions } from "../composables/useMentions";
+import { useSlashSkills } from "../composables/useSlashSkills";
 import AgentAvatar from "../components/AgentAvatar.vue";
+import MentionChips from "../components/MentionChips.vue";
+import MentionPopup from "../components/MentionPopup.vue";
 import PreviewPanel from "../components/PreviewPanel.vue";
+import SkillPopup from "../components/SkillPopup.vue";
+import VoiceDictate from "../components/VoiceDictate.vue";
 
 const route = useRoute();
 // 详情页组件在同路由下被复用（任务间跳转），taskId 必须跟随路由参数变化
@@ -39,6 +45,10 @@ watch(
     deliverables.value = [];
     toolApproval.value = null;
     taskId.value = id as string;
+    // 换任务时清掉上一任务遗留的 @ 引用与弹层状态
+    mention.state.open = false;
+    mention.pendingMentions.value = [];
+    slash.state.open = false;
     void refreshAll();
   }
 );
@@ -46,8 +56,8 @@ watch(
 const task = ref<Task | null>(null);
 const messages = ref<TaskMessage[]>([]);
 const deliverables = ref<Deliverable[]>([]);
-// 当前进行中轮次的实时输出（轮次结束即被消息列表取代）
-const live = ref<{ kind: "text" | "tool" | "file"; text: string }[]>([]);
+// 当前进行中轮次的实时输出（轮次结束即被消息列表取代）；think 为模型思考流（think）
+const live = ref<{ kind: "text" | "tool" | "file" | "think"; text: string }[]>([]);
 const draft = ref("");
 const error = ref("");
 const sendError = ref("");
@@ -62,7 +72,8 @@ let elapsedTimer: ReturnType<typeof setInterval> | undefined;
 
 const running = computed(() => task.value?.status === "running" || task.value?.status === "pending");
 const awaitingApproval = computed(() => task.value?.status === "awaiting_approval");
-const canSend = computed(() => !running.value && !sending.value && draft.value.trim().length > 0);
+// 运行中也可发送（发送 = 打断当前轮并开新一轮），只挡重复提交
+const canSend = computed(() => draft.value.trim().length > 0 && !sending.value);
 
 // ---------- 附件（随追问一起上传，落进任务工作区） ----------
 const {
@@ -209,10 +220,13 @@ const STATUS_TEXT: Record<string, string> = {
   cancelled: "已取消",
 };
 
-function pushLive(kind: "text" | "tool" | "file", text: string): void {
+function pushLive(kind: "text" | "tool" | "file" | "think", text: string): void {
   const last = live.value.at(-1);
-  if (kind === "text" && last?.kind === "text") last.text += text;
+  if ((kind === "text" || kind === "think") && last?.kind === kind) last.text += text;
   else live.value.push({ kind, text });
+  // 思考流可能很长，只保留末尾一段，避免面板与 DOM 无限增长
+  const cur = live.value.at(-1);
+  if (kind === "think" && cur && cur.text.length > 4000) cur.text = "…" + cur.text.slice(-3800);
 }
 
 // 有新内容时自动滚动到底部（仅当用户停留在底部附近，回看历史不打扰）
@@ -293,6 +307,9 @@ function handleEnvelope(env: TaskEventEnvelope): void {
   };
   if (event.type === "tool_approval_request") {
     toolApproval.value = { tool: event.tool ?? "", input: fmtToolInput(event.input) };
+  } else if (event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_delta" && event.assistantMessageEvent.delta) {
+    // 思考阶段也有输出：不显示就是"看起来卡住"（正文开始前的 ~90s 空窗）
+    pushLive("think", event.assistantMessageEvent.delta);
   } else if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta" && event.assistantMessageEvent.delta) {
     pushLive("text", event.assistantMessageEvent.delta);
   } else if (event.type === "tool_execution_start" && event.toolName === "workspace_write") {
@@ -324,20 +341,27 @@ async function refreshAll(): Promise<void> {
 
 async function onSend(): Promise<void> {
   const prompt = draft.value.trim();
-  if (!prompt || running.value || sending.value) return;
+  if (!prompt || sending.value) return;
+  // 运行中发送 = 打断：服务端先中止当前轮，等其落定后以该消息开新一轮
+  const wasRunning = running.value;
   const files = [...attachments.value];
+  const mentions = [...mention.pendingMentions.value];
   sending.value = true;
   sendError.value = "";
   draft.value = "";
+  slash.state.open = false;
+  mention.state.open = false;
   // 本地乐观插入，服务端确认后由消息列表刷新接管
   messages.value = [
     ...messages.value,
     { id: `local-${Date.now()}`, taskId: taskId.value, role: "user", content: prompt, createdAt: new Date().toISOString() },
   ];
   try {
-    if (files.length) await sendTaskMessageWithFiles(taskId.value, prompt, files);
-    else await sendTaskMessage(taskId.value, prompt);
+    if (files.length) await sendTaskMessageWithFiles(taskId.value, prompt, files, mentions, wasRunning);
+    else await sendTaskMessage(taskId.value, prompt, mentions, wasRunning);
+    mention.pendingMentions.value = [];
     resetAttachments();
+    if (wasRunning) toast("info", "已打断当前轮次，正在以新消息继续对话");
   } catch (err) {
     sendError.value = err instanceof Error ? err.message : "发送失败";
     await refreshMessages();
@@ -353,6 +377,35 @@ function onKeydown(e: KeyboardEvent): void {
     e.preventDefault();
     void onSend();
   }
+}
+
+// ---------- 追问输入框的 @ 引用：与新建任务共用弹层组件与数据源 ----------
+const taRef = ref<HTMLTextAreaElement | null>(null);
+const mention = useMentions({ prompt: draft, taRef, onFallbackKey: onKeydown });
+// ---------- / 斜杠技能：键入 / 弹技能候选，与 @ 弹层互斥 ----------
+const slash = useSlashSkills({ prompt: draft, taRef });
+
+/** 弹层键盘链：/ 技能弹层优先，其次 @ 引用弹层，最后宿主（Enter 发送） */
+function onTaKeydown(e: KeyboardEvent): void {
+  if (slash.onKeydown(e)) return;
+  mention.onTaKeydown(e);
+}
+
+/** 输入/点击时同时探测 / 与 @ 两个弹层（检测正则互斥，不会同时开） */
+function detectPopups(): void {
+  slash.detectSlash();
+  mention.detectMention();
+}
+
+/** 语音转写回填：插入光标处，与前后已有内容补空格分隔 */
+function appendVoiceText(text: string): void {
+  const ta = taRef.value;
+  const pos = ta?.selectionStart ?? draft.value.length;
+  const before = draft.value.slice(0, pos);
+  const after = draft.value.slice(pos);
+  const glue = (s: string, re: RegExp) => (s && !re.test(s) ? " " : "");
+  draft.value = before + glue(before, /\s$/) + text + glue(after, /^\s/) + after;
+  ta?.focus();
 }
 
 async function onCancel(): Promise<void> {
@@ -541,6 +594,7 @@ onBeforeUnmount(() => {
                 <div class="lines" ref="liveEl">
                   <template v-for="(line, i) in live" :key="i">
                     <p v-if="line.kind === 'file'" class="file-line">📄 {{ line.text }}</p>
+                    <p v-else-if="line.kind === 'think'" class="think-line">💭 {{ line.text }}</p>
                     <p v-else :class="line.kind">{{ line.text }}</p>
                   </template>
                   <p v-if="!live.length" class="hint-dark">正在思考，输出将实时出现在这里…</p>
@@ -610,12 +664,13 @@ onBeforeUnmount(() => {
           <div
             v-else
             class="composer"
-            :class="{ disabled: running, 'drop-hover': dragging }"
+            :class="{ 'drop-hover': dragging }"
             @dragenter.prevent="onDragEnter"
             @dragover.prevent="onDragEnter"
             @dragleave.prevent="onDragLeave"
             @drop.prevent="onDrop"
           >
+            <MentionChips :api="mention" />
             <div v-if="attachments.length" class="attach-strip">
               <span
                 v-for="(f, i) in attachments"
@@ -628,13 +683,18 @@ onBeforeUnmount(() => {
                 <span class="fremove" title="移除附件" @click="removeAttachment(i)">✕</span>
               </span>
             </div>
+            <!-- 运行中不锁定输入：此时发送 = 打断当前轮并以新消息开新一轮 -->
             <textarea
+              ref="taRef"
               v-model="draft"
               rows="2"
-              :disabled="running"
-              :placeholder="running ? 'Agent 正在执行本轮任务…' : '继续追问，可附上文件或直接拖入输入框'"
-              @keydown="onKeydown"
+              :placeholder="running ? 'Agent 正在执行本轮，输入消息将打断并继续对话…' : '继续追问，输入 @ 引用联系人 / 云文档，输入 / 调用技能'"
+              @keydown="onTaKeydown"
+              @input="detectPopups"
+              @click="detectPopups"
             ></textarea>
+            <MentionPopup :api="mention" />
+            <SkillPopup :api="slash" />
             <div class="composer-bar">
               <span class="agent-chip">
                 <AgentAvatar :name="task.agentName" :size="15" />
@@ -649,8 +709,22 @@ onBeforeUnmount(() => {
                 <svg class="icon" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.5 8.35l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
               </button>
               <input ref="fileInput" type="file" multiple hidden @change="onFilesPicked" />
-              <span class="key-hint">{{ running ? "等待本轮结束…" : "Enter 发送 · Shift+Enter 换行" }}</span>
-              <button class="send" :disabled="!canSend" title="发送" @click="onSend">
+
+              <!-- 语音输入：点击录音 → 再点结束并转写回填 -->
+              <VoiceDictate @text="appendVoiceText" />
+
+              <span class="key-hint">{{ running ? "Enter 打断并继续对话 · Shift+Enter 换行" : "Enter 发送 · Shift+Enter 换行" }}</span>
+              <!-- 运行中且无输入 = 停止本轮；有输入 = 发送（打断当前轮并继续对话） -->
+              <button
+                v-if="running && !draft.trim()"
+                class="send stop"
+                :disabled="sending"
+                title="停止本轮执行"
+                @click="onCancel"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
+              </button>
+              <button v-else class="send" :disabled="!canSend" :title="running ? '发送并打断当前轮次（Enter）' : '发送（Enter）'" @click="onSend">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 19V5M5 12l7-7 7 7" />
                 </svg>
@@ -1010,6 +1084,11 @@ button.sm {
 .lines .file-line {
   color: #6ee7b7;
 }
+/* 模型思考流：弱化显示，与正文区分 */
+.lines .think-line {
+  color: #8b96ab;
+  font-style: italic;
+}
 .lines p {
   margin: 0 0 4px;
 }
@@ -1042,6 +1121,8 @@ button.sm {
   border-radius: 16px;
   padding: 12px 14px 10px;
   transition: border-color 0.15s, box-shadow 0.15s;
+  /* @ 弹层（MentionPopup）以本容器为锚点向上展开 */
+  position: relative;
 }
 .composer:focus-within {
   border-color: var(--accent);
@@ -1049,9 +1130,6 @@ button.sm {
 }
 :root[data-theme="dark"] .composer:focus-within {
   box-shadow: 0 0 0 3px rgba(47, 157, 117, 0.22);
-}
-.composer.disabled {
-  opacity: 0.6;
 }
 .composer.drop-hover {
   border-color: var(--accent);
@@ -1186,6 +1264,15 @@ button.sm {
 .send svg {
   width: 16px;
   height: 16px;
+}
+/* 运行中的停止按钮：红色方块，与顶栏取消一致的危险色 */
+.send.stop {
+  background: var(--danger);
+  color: #fff;
+}
+.send.stop:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.08);
 }
 .send-err {
   max-width: 780px;

@@ -12,6 +12,7 @@ import type {
   ModelOption,
   ModelOverride,
   PagedTasks,
+  SlashSkill,
   SkillDetail,
   SkillInfo,
   SkillInstallResult,
@@ -22,6 +23,10 @@ import type {
   TaskEventEnvelope,
   TaskMessage,
   ToolPolicy,
+  WpsContacts,
+  WpsMention,
+  WpsMentionSearch,
+  WpsProfile,
 } from "@office/shared";
 import { toast } from "./composables/toast";
 
@@ -131,28 +136,41 @@ export function getTask(id: string) {
 }
 
 export function createTask(
-  agentId: string,
+  agentId: string | undefined,
   prompt: string,
   title?: string,
   model?: { providerId: string; modelId: string },
-  workspaceDir?: string
+  workspaceDir?: string,
+  mentions?: WpsMention[]
 ) {
   return request<{ id: string }>("/tasks", {
     method: "POST",
-    body: JSON.stringify({ agentId, prompt, title, ...model, workspaceDir: workspaceDir || undefined }),
+    body: JSON.stringify({
+      agentId: agentId || undefined, // 专家非必选：不选时由服务端落到默认「通用助手」
+      prompt,
+      title,
+      ...model,
+      workspaceDir: workspaceDir || undefined,
+      mentions: mentions?.length ? mentions : undefined,
+    }),
   });
 }
 
 /** 带附件派发任务：multipart 提交（字段在前、文件在后），附件会随任务落进工作区。 */
 export function createTaskWithFiles(
-  agentId: string,
+  agentId: string | undefined,
   prompt: string,
   files: File[],
-  opts: { title?: string; model?: { providerId: string; modelId: string }; workspaceDir?: string } = {}
+  opts: {
+    title?: string;
+    model?: { providerId: string; modelId: string };
+    workspaceDir?: string;
+    mentions?: WpsMention[];
+  } = {}
 ) {
   const form = new FormData();
   // 顺序即到达顺序：先字段后文件，服务端才能在落附件前确定工作区
-  form.set("agentId", agentId);
+  if (agentId) form.set("agentId", agentId); // 专家非必选
   form.set("prompt", prompt);
   if (opts.title) form.set("title", opts.title);
   if (opts.model) {
@@ -160,6 +178,7 @@ export function createTaskWithFiles(
     form.set("modelId", opts.model.modelId);
   }
   if (opts.workspaceDir) form.set("workspaceDir", opts.workspaceDir);
+  if (opts.mentions?.length) form.set("mentions", JSON.stringify(opts.mentions));
   for (const f of files) form.append("files", f, f.name);
   return request<{ id: string }>("/tasks", { method: "POST", body: form });
 }
@@ -167,6 +186,54 @@ export function createTaskWithFiles(
 /** 派发时可选的模型：启用供应商下的「可用模型」。 */
 export function listModelOptions() {
   return request<ModelOption[]>("/models");
+}
+
+// ---------- WPS 365 账号与 @ 引用（数据由 wps365-skill 脚本在服务端执行获得） ----------
+
+/** 当前账号缓存（未同步过时 profile 为 null；configured 表示本机是否已具备 WPS 登录态） */
+export function getWpsMe() {
+  return request<{ configured: boolean; profile: WpsProfile | null }>("/wps/me");
+}
+
+/** 设置页「同步」按钮：服务端跑 user-current 脚本刷新当前账号缓存 */
+export function syncWpsAccount() {
+  return request<{ configured: boolean; profile: WpsProfile }>("/wps/sync", { method: "POST" });
+}
+
+/** @ 弹层搜索：服务端并行跑 im/contacts/drive 等脚本并归一化 */
+export function searchMentions(q = "") {
+  return request<WpsMentionSearch>(`/wps/mentions?q=${encodeURIComponent(q)}`);
+}
+
+/** 全量通讯录（组织结构化；服务端内存缓存，首次拉取约数秒） */
+export function getWpsContacts() {
+  return request<WpsContacts>("/wps/contacts");
+}
+
+// ---------- 云文档选择器（浏览最近 / 我的云文档 / 团队文档库 / 搜索） ----------
+
+export interface WpsDriveEntry {
+  id: string;
+  name: string;
+  folder: boolean;
+  subtitle: string;
+}
+
+export function getWpsDriveRecent() {
+  return request<{ entries: WpsDriveEntry[] }>("/wps/drive/recent");
+}
+
+export function getWpsDriveEntries(parent: string, drive?: string) {
+  const p = encodeURIComponent(parent);
+  return request<{ entries: WpsDriveEntry[] }>(`/wps/drive/entries?parent=${p}${drive ? `&drive=${encodeURIComponent(drive)}` : ""}`);
+}
+
+export function getWpsDriveDoclibs() {
+  return request<{ entries: WpsDriveEntry[] }>("/wps/drive/doclibs");
+}
+
+export function getWpsDriveSearch(q: string) {
+  return request<{ entries: WpsDriveEntry[] }>(`/wps/drive/search?q=${encodeURIComponent(q)}`);
 }
 
 export function cancelTask(id: string) {
@@ -198,23 +265,50 @@ export function getTaskMessages(taskId: string) {
   return request<TaskMessage[]>(`/tasks/${taskId}/messages`);
 }
 
-export function sendTaskMessage(taskId: string, prompt: string) {
+export function sendTaskMessage(taskId: string, prompt: string, mentions?: WpsMention[], interrupt = false) {
   return request<{ ok: true }>(`/tasks/${taskId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({
+      prompt,
+      mentions: mentions?.length ? mentions : undefined,
+      interrupt: interrupt || undefined,
+    }),
   });
 }
 
 /** 带附件的追问：multipart 提交（prompt 字段在前、文件在后），附件会落进任务工作区。 */
-export function sendTaskMessageWithFiles(taskId: string, prompt: string, files: File[]) {
+export function sendTaskMessageWithFiles(
+  taskId: string,
+  prompt: string,
+  files: File[],
+  mentions?: WpsMention[],
+  interrupt = false
+) {
   const form = new FormData();
   form.set("prompt", prompt);
+  if (mentions?.length) form.set("mentions", JSON.stringify(mentions));
+  if (interrupt) form.set("interrupt", "true");
   for (const f of files) form.append("files", f, f.name);
   return request<{ ok: true }>(`/tasks/${taskId}/messages`, { method: "POST", body: form });
 }
 
 export function listDeliverables(taskId: string) {
   return request<Deliverable[]>(`/tasks/${taskId}/deliverables`);
+}
+
+/** 斜杠技能候选（GET /skills，全体登录用户可见的 user-invocable 技能元数据，输入框 / 弹层数据源） */
+export function listSlashSkills() {
+  return request<SlashSkill[]>("/skills");
+}
+
+/** 语音转文字：multipart 提交录音，服务端按已启用供应商依次尝试 OpenAI 兼容转写端点 */
+export function transcribeVoice(audio: Blob, filename: string) {
+  const form = new FormData();
+  form.append("audio", audio, filename);
+  return request<{ text: string; provider: string; model: string }>("/voice/transcribe", {
+    method: "POST",
+    body: form,
+  });
 }
 
 // ---------- 管理端 ----------

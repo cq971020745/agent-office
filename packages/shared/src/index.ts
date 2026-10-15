@@ -128,6 +128,65 @@ export interface CreateTaskRequest {
   modelId?: string;
   /** 用户自选的工作目录（绝对路径）；缺省时用专家常驻文件夹 */
   workspaceDir?: string;
+  /** 输入框 @ 选中的 WPS 对象（联系人/群聊/云文档等），随任务注入提示词 */
+  mentions?: WpsMention[];
+}
+
+/** @ 弹层数据源类别（对齐 WPS Comate：聊天/联系人/云文档/知识库） */
+export type WpsMentionType = "chat" | "contact" | "doc" | "kb" | "meeting";
+
+/** @ 弹层候选条目（服务端把各 WPS 脚本输出归一化成这个形状） */
+export interface WpsMentionItem {
+  type: WpsMentionType;
+  /** WPS 侧对象 id（chat_id / user_id / file_id / space_id / 会议记录 id） */
+  id: string;
+  name: string;
+  /** 补充说明（部门、群类型、文档大小等） */
+  subtitle?: string;
+}
+
+/** 任务携带的 @ 引用：id + 名称即可，专家侧按需回查详情 */
+export interface WpsMention {
+  type: WpsMentionType;
+  id: string;
+  name: string;
+}
+
+/** @ 搜索结果（含账号配置状态，前端据此提示先同步） */
+export interface WpsMentionSearch {
+  configured: boolean;
+  items: WpsMentionItem[];
+}
+
+/** WPS 365 当前账号（设置页同步按钮的结果缓存） */
+export interface WpsProfile {
+  id: string;
+  name: string;
+  defDeptId: string;
+  deptName: string;
+  deptPath: string;
+  email: string;
+  phone: string;
+  avatar: string;
+  syncedAt: string;
+}
+
+/** 全量通讯录条目（GET /wps/contacts，前端按 deptPath 分组做组织结构化展示） */
+export interface WpsDirectoryEntry {
+  id: string;
+  name: string;
+  deptId: string;
+  deptName: string;
+  /** 组织路径（不含集团根前缀），如「信投公司/紫金数云公司/紫金数云_技术部」 */
+  deptPath: string;
+  isLeader: boolean;
+}
+
+export interface WpsContacts {
+  configured: boolean;
+  total: number;
+  entries: WpsDirectoryEntry[];
+  fetchedAt: string;
 }
 
 /** 任务列表分页响应（GET /tasks 带 limit/offset/status/q 时返回） */
@@ -350,6 +409,16 @@ export interface TaskMessage {
 
 export interface SendTaskMessageRequest {
   prompt: string;
+  /** 任务执行中发送 = 打断当前轮次，本轮中止后以该消息开新一轮 */
+  interrupt?: boolean;
+}
+
+/** 斜杠技能候选（GET /skills，仅 user-invocable，供输入框 / 弹层使用） */
+export interface SlashSkill {
+  name: string;
+  description: string;
+  /** 斜杠调用的参数提示（空 = 无参数） */
+  argumentHint: string;
 }
 
 /** SSE 事件封套：pi 原始事件原样透传（type + 载荷），任务生命周期事件由平台注入。 */

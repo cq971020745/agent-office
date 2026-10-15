@@ -1,0 +1,104 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: contacts
+run_py: skills/contacts/run.py
+schema_version: cli_reference.v1
+subcommands:
+  batch-get-depts:
+    usage: run.py batch-get-depts [-h] dept_ids
+    positional:
+    - dept_ids
+    options: []
+    example: python skills/contacts/run.py batch-get-depts <dept_ids>
+    reject_options:
+    - --dept-ids
+    - --dept_ids
+    - --drive
+    - --drive-id
+    - --drive_id
+  get-root-dept:
+    usage: run.py get-root-dept [-h]
+    positional: []
+    options: []
+    example: python skills/contacts/run.py get-root-dept
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-dept-children:
+    usage: run.py list-dept-children [-h] [--page-size PAGE_SIZE]
+    positional:
+    - dept_id
+    options:
+    - --page-size
+    - --page-token
+    - --with-total
+    example: python skills/contacts/run.py list-dept-children <dept_id>
+    reject_options:
+    - --dept-id
+    - --dept_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-dept-members:
+    usage: run.py list-dept-members [-h] [--page-size PAGE_SIZE]
+    positional:
+    - dept_id
+    options:
+    - --all
+    - --max-pages
+    - --page-size
+    - --page-token
+    - --recursive
+    - --status
+    - --with-total
+    example: python skills/contacts/run.py list-dept-members <dept_id>
+    reject_options:
+    - --dept-id
+    - --dept_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-user-depts:
+    usage: run.py list-user-depts [-h] user_id
+    positional:
+    - user_id
+    options: []
+    example: python skills/contacts/run.py list-user-depts <user_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --user-id
+    - --user_id
+  search:
+    usage: run.py search [-h] [--keyword KEYWORD] [--page-size PAGE_SIZE]
+    positional:
+    - name
+    options:
+    - --keyword
+    - --page-size
+    - --page-token
+    - --status
+    - --with-total
+    example: python skills/contacts/run.py search <name>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --name
+  search-depts:
+    usage: run.py search-depts [-h] [--page-size PAGE_SIZE]
+    positional:
+    - search_name
+    options:
+    - --page-size
+    - --page-token
+    - --with-total
+    example: python skills/contacts/run.py search-depts <search_name>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --search-name
+    - --search_name

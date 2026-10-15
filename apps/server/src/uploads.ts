@@ -54,14 +54,18 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * 把用户输入与附件清单合成给 agent 的最终提示词：附件虽已落进工作区，
- * 但模型不会主动知道新文件出现，必须显式列出文件名。这段文案同时作为
- * 用户消息展示在对话里，因此保持人可读。
+ * 附件清单附注（不含消息本体）：附件虽已落进工作区，但模型不会主动知道新文件出现，
+ * 必须显式列出文件名。与 @ 引用一起构成 context_note，只在首轮发给模型，不进展示文本。
  */
+export function attachmentNote(files: { filename: string; size: number }[]): string {
+  if (!files.length) return "";
+  const lines = files.map((f) => `- ${f.filename}（${formatBytes(f.size)}）`).join("\n");
+  return `[本条消息附带 ${files.length} 个附件，已存入当前工作区，可用 workspace_read 读取]\n${lines}`;
+}
+
 export function withAttachmentNote(prompt: string, files: { filename: string; size: number }[]): string {
   if (!files.length) return prompt;
-  const lines = files.map((f) => `- ${f.filename}（${formatBytes(f.size)}）`).join("\n");
-  return `${prompt}\n\n[本条消息附带 ${files.length} 个附件，已存入当前工作区，可用 workspace_read 读取]\n${lines}`;
+  return `${prompt}\n\n${attachmentNote(files)}`;
 }
 
 /**

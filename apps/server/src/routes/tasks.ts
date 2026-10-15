@@ -2,15 +2,17 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import fs from "node:fs";
 import path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { isChatModel, type AgentConfig, type AgentTaskWithDeliverables, type Task, type TaskStatus } from "@office/shared";
+import { isChatModel, type AgentConfig, type AgentTaskWithDeliverables, type Task, type TaskStatus, type WpsMention } from "@office/shared";
 import { currentUser } from "../auth.js";
 import { paths } from "../config.js";
 import { db, now, uuid } from "../db.js";
 import { attachSse, clearTask, publishStatus } from "../sse.js";
-import { approveTask, cancelTask, dropTask, sendMessage, startTask } from "../runner.js";
+import { approveTask, cancelTask, dropTask, sendMessage, startTask, waitTaskIdle } from "../runner.js";
 import { resolveToolApproval } from "../tool-approval.js";
+import { listSkills } from "../skills.js";
 import { getAgentSkillBinding } from "../skills.js";
-import { moveFile, stageMultipartFiles, uniqueTargetPath, withAttachmentNote, type StagedUpload } from "../uploads.js";
+import { moveFile, stageMultipartFiles, uniqueTargetPath, attachmentNote, type StagedUpload } from "../uploads.js";
+import { buildMentionsNote, parseMentionsField, sanitizeMentions } from "../mentions.js";
 
 /** 审批流在任务时间线里留痕（拒绝/取消），复用 runner 的消息表结构。 */
 function insertMessage(taskId: string, role: "user", content: string): void {
@@ -303,6 +305,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       providerId?: string;
       modelId?: string;
       workspaceDir?: string;
+      mentions?: unknown;
     } = {};
     // multipart 附件先落到暂存目录：工作区取决于字段值，而字段可能在文件分片之后才到达
     const stageDir = isMultipart ? path.join(paths.workspaces, `_stage-${uuid()}`) : "";
@@ -316,8 +319,11 @@ export function registerTaskRoutes(app: FastifyInstance): void {
           "providerId",
           "modelId",
           "workspaceDir",
+          "mentions",
         ]);
         body = parsed.fields as typeof body;
+        // multipart 字段全是字符串：mentions 以 JSON 字符串传递
+        body.mentions = parseMentionsField(body.mentions as unknown as string);
         staged = parsed.staged;
         if (staged.some((s) => s.truncated)) {
           return reply.code(413).send({ error: "单个附件不能超过 20MB" });
@@ -325,15 +331,25 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       } else {
         body = req.body as typeof body;
       }
-      if (!body.agentId || !body.prompt?.trim()) {
-        return reply.code(400).send({ error: "agentId and prompt are required" });
+      if (!body.prompt?.trim()) {
+        return reply.code(400).send({ error: "prompt is required" });
       }
-      const agent = db
-        .prepare("SELECT id, provider_id, model_id, folder FROM agents WHERE id = ? AND deleted = 0")
-        .get(body.agentId) as
-        | { id: string; provider_id: string | null; model_id: string | null; folder: string }
-        | undefined;
-      if (!agent) return reply.code(400).send({ error: "unknown agent" });
+      // 专家非必选：显式指定优先，未指定时落到内置「通用助手」，再退化到第一个可用专家
+      type AgentPick = { id: string; provider_id: string | null; model_id: string | null; folder: string };
+      let agent = body.agentId
+        ? (db
+            .prepare("SELECT id, provider_id, model_id, folder FROM agents WHERE id = ? AND deleted = 0")
+            .get(body.agentId) as AgentPick | undefined)
+        : undefined;
+      if (body.agentId && !agent) return reply.code(400).send({ error: "unknown agent" });
+      if (!agent) {
+        agent = db
+          .prepare(
+            "SELECT id, provider_id, model_id, folder FROM agents WHERE deleted = 0 ORDER BY (id = 'builtin-general-assistant') DESC, created_at LIMIT 1"
+          )
+          .get() as AgentPick | undefined;
+        if (!agent) return reply.code(400).send({ error: "暂无可用专家，请先在专家页创建" });
+      }
 
       // 模型选择：请求显式指定优先（专家与模型解耦），否则回退专家默认
       let providerId = body.providerId?.trim() ?? "";
@@ -380,13 +396,16 @@ export function registerTaskRoutes(app: FastifyInstance): void {
         workspace = path.join(paths.workspaces, id);
         fs.mkdirSync(workspace, { recursive: true });
       }
-      // 标题取自用户原文；入库的 prompt 合成附件清单，agent 首轮即知道有哪些文件可读
+      // 标题取自用户原文；prompt 落库原文用于展示，附件清单与 @ 引用进 context_note（只注入模型首轮）
       const prompt = body.prompt.trim();
       const title = body.title?.trim() || prompt.slice(0, 40);
-      const storedPrompt = staged.length ? withAttachmentNote(prompt, staged) : prompt;
+      const mentions = sanitizeMentions(body.mentions);
+      const contextNote = [staged.length ? attachmentNote(staged) : "", buildMentionsNote(mentions)]
+        .filter(Boolean)
+        .join("\n");
       db.prepare(
-        "INSERT INTO tasks (id, user_id, agent_id, title, prompt, status, provider_id, model_id, workspace_path, custom_workspace, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)"
-      ).run(id, user.id, body.agentId, title, storedPrompt, providerId, modelId, workspace, customWorkspace, now());
+        "INSERT INTO tasks (id, user_id, agent_id, title, prompt, status, provider_id, model_id, workspace_path, custom_workspace, context_note, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)"
+      ).run(id, user.id, agent.id, title, prompt, providerId, modelId, workspace, customWorkspace, contextNote, now());
 
       // 附件从暂存区移入工作区并登记（rel_path 相对工作区；登记供成果物扫描排除）
       if (staged.length) {
@@ -547,6 +566,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
 
   // 多轮追问：纯 JSON 或 multipart（带附件）。附件在确认本轮可执行后落进任务工作区，
   // 与提示词一起合成附件清单交给 agent；若并发竞态撞上 busy 则回滚刚登记的附件。
+  // interrupt=true：任务执行中发送 = 打断当前轮次（取消本轮），落定后以该消息开新一轮。
   app.post("/tasks/:id/messages", { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const row = getTaskRow(id);
@@ -558,23 +578,43 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     const stageDir = isMultipart ? path.join(paths.workspaces, `_stage-${uuid()}`) : "";
     let prompt = "";
     let staged: StagedUpload[] = [];
+    let mentions: WpsMention[] = [];
+    let interrupt = false;
     try {
       if (isMultipart) {
-        const parsed = await stageMultipartFiles(req, stageDir, ["prompt"]);
+        const parsed = await stageMultipartFiles(req, stageDir, ["prompt", "mentions", "interrupt"]);
         prompt = (parsed.fields.prompt ?? "").trim();
         staged = parsed.staged;
+        mentions = parseMentionsField(parsed.fields.mentions);
+        interrupt = parsed.fields.interrupt === "true";
         if (staged.some((s) => s.truncated)) {
           return reply.code(413).send({ error: "单个附件不能超过 20MB" });
         }
       } else {
         prompt = ((req.body as { prompt?: string })?.prompt ?? "").trim();
+        mentions = sanitizeMentions((req.body as { mentions?: unknown })?.mentions);
+        interrupt = (req.body as { interrupt?: unknown })?.interrupt === true;
       }
       if (!prompt) return reply.code(400).send({ error: "prompt is required" });
+
+      // 执行中追问 = 打断：请求中止当前轮，等 runner 落定（状态落库、busy 释放）后再开新一轮
+      if (row.status === "running" || row.status === "pending") {
+        if (!interrupt) {
+          return reply.code(409).send({ error: "agent 正在执行中；可勾选打断后重发，或等本轮结束再继续" });
+        }
+        cancelTask(id);
+        const idle = await waitTaskIdle(id, 30_000);
+        if (!idle) return reply.code(409).send({ error: "打断超时，当前轮次仍未结束，请稍后重试" });
+      }
 
       // 先落附件再启动本轮：agent 首个工具调用就可能读工作区
       let moved: string[] = [];
       if (staged.length) moved = persistUploads(id, row.workspace_path, staged);
-      const result = sendMessage(id, withAttachmentNote(prompt, staged));
+      // 追问的 @ 引用只注入本轮模型输入（prompt 落库原文用于展示，与首轮 context_note 同机制）
+      const contextNote = [staged.length ? attachmentNote(staged) : "", buildMentionsNote(mentions)]
+        .filter(Boolean)
+        .join("\n");
+      const result = sendMessage(id, prompt, contextNote);
       if (result === "busy") {
         rollbackUploads(id, row.workspace_path, moved);
         return reply.code(409).send({ error: "agent 正在执行中，请等本轮结束后再继续" });
@@ -584,6 +624,13 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     } finally {
       if (stageDir) fs.rmSync(stageDir, { recursive: true, force: true });
     }
+  });
+
+  // 斜杠技能候选（输入框 / 弹层数据源）：仅登录用户可见的 user-invocable 技能元数据
+  app.get("/skills", { onRequest: [app.authenticate] }, async () => {
+    return listSkills()
+      .filter((s) => s.userInvocable)
+      .map((s) => ({ name: s.name, description: s.description, argumentHint: s.argumentHint }));
   });
 
   // SSE 实况。EventSource 无法带 Authorization 头，用 ?token= 传递 JWT。
@@ -605,6 +652,14 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       const row = getTaskRow(id);
       if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
       reply.hijack();
+      // hijack 之后 Fastify 不再刷写响应头：EventSource 跨域时（桌面 dev 渲染层 5173 → 服务端 8787）
+      // 浏览器会因缺少 CORS 头直接关闭事件流，实时面板收不到任何事件，须手动回写
+      const origin = req.headers.origin;
+      if (origin) {
+        reply.raw.setHeader("access-control-allow-origin", origin);
+        reply.raw.setHeader("access-control-allow-credentials", "true");
+        reply.raw.setHeader("vary", "Origin");
+      }
       attachSse(id, reply.raw);
     }
   );

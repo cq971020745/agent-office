@@ -1,0 +1,254 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: dbsheet
+run_py: skills/dbsheet/run.py
+schema_version: cli_reference.v1
+subcommands:
+  create-records:
+    usage: run.py create-records [-h] --json JSON [--prefer-id] [--confirm]
+    positional:
+    - file_id
+    - sheet_id
+    options:
+    - --confirm
+    - --json
+    - --prefer-id
+    example: python skills/dbsheet/run.py create-records <file_id> <sheet_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+  create-sheet:
+    usage: run.py create-sheet [-h] --json JSON [--confirm] file_id
+    positional:
+    - file_id
+    options:
+    - --confirm
+    - --json
+    example: python skills/dbsheet/run.py create-sheet <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  create-view:
+    usage: run.py create-view [-h] [--name NAME]
+    positional:
+    - file_id
+    - sheet_id
+    options:
+    - --confirm
+    - --name
+    - --view-type
+    example: python skills/dbsheet/run.py create-view <file_id> <sheet_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+  delete-empty-records:
+    usage: run.py delete-empty-records [-h] [--confirm] file_id sheet_id
+    positional:
+    - file_id
+    - sheet_id
+    options:
+    - --confirm
+    example: python skills/dbsheet/run.py delete-empty-records <file_id> <sheet_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+  delete-records:
+    usage: run.py delete-records [-h] [--confirm]
+    positional:
+    - file_id
+    - sheet_id
+    - record_ids
+    options:
+    - --confirm
+    example: python skills/dbsheet/run.py delete-records <file_id> <sheet_id> <record_ids>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --record-ids
+    - --record_ids
+    - --sheet-id
+    - --sheet_id
+  delete-sheet:
+    usage: run.py delete-sheet [-h] [--confirm] file_id sheet_id
+    positional:
+    - file_id
+    - sheet_id
+    options:
+    - --confirm
+    example: python skills/dbsheet/run.py delete-sheet <file_id> <sheet_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+  get-form-meta:
+    usage: run.py get-form-meta [-h] file_id sheet_id view_id
+    positional:
+    - file_id
+    - sheet_id
+    - view_id
+    options: []
+    example: python skills/dbsheet/run.py get-form-meta <file_id> <sheet_id> <view_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+    - --view-id
+    - --view_id
+  get-record:
+    usage: run.py get-record [-h] [--prefer-id] file_id sheet_id record_id
+    positional:
+    - file_id
+    - sheet_id
+    - record_id
+    options:
+    - --prefer-id
+    example: python skills/dbsheet/run.py get-record <file_id> <sheet_id> <record_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --record-id
+    - --record_id
+    - --sheet-id
+    - --sheet_id
+  list-records:
+    usage: run.py list-records [-h] [--prefer-id] [--page-size PAGE_SIZE]
+    positional:
+    - file_id
+    - sheet_id
+    options:
+    - --fields
+    - --filter
+    - --max-records
+    - --page-size
+    - --page-token
+    - --prefer-id
+    - --text-value
+    - --view-id
+    example: python skills/dbsheet/run.py list-records <file_id> <sheet_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+  schema:
+    usage: run.py schema [-h] file_id
+    positional:
+    - file_id
+    options: []
+    example: python skills/dbsheet/run.py schema <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  search-records:
+    usage: run.py search-records [-h] [--prefer-id]
+    positional:
+    - file_id
+    - sheet_id
+    - record_ids
+    options:
+    - --prefer-id
+    example: python skills/dbsheet/run.py search-records <file_id> <sheet_id> <record_ids>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --record-ids
+    - --record_ids
+    - --sheet-id
+    - --sheet_id
+  update-form-meta:
+    usage: run.py update-form-meta [-h] [--name NAME] [--description DESCRIPTION]
+    positional:
+    - file_id
+    - sheet_id
+    - view_id
+    options:
+    - --confirm
+    - --description
+    - --name
+    example: python skills/dbsheet/run.py update-form-meta <file_id> <sheet_id> <view_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+    - --view-id
+    - --view_id
+  update-records:
+    usage: run.py update-records [-h] --json JSON [--prefer-id] [--confirm]
+    positional:
+    - file_id
+    - sheet_id
+    options:
+    - --confirm
+    - --json
+    - --prefer-id
+    example: python skills/dbsheet/run.py update-records <file_id> <sheet_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id
+  update-sheet:
+    usage: run.py update-sheet [-h] --name NAME [--confirm] file_id sheet_id
+    positional:
+    - file_id
+    - sheet_id
+    options:
+    - --confirm
+    - --name
+    example: python skills/dbsheet/run.py update-sheet <file_id> <sheet_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+    - --sheet-id
+    - --sheet_id

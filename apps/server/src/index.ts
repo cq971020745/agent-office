@@ -7,13 +7,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { requireAdmin } from "./auth.js";
 import { config, ensureDirs } from "./config.js";
-import { migrate } from "./db.js";
+import { ensureDefaultAgent, migrate } from "./db.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
+import { registerVoiceRoutes } from "./routes/voice.js";
+import { registerWpsRoutes, warmDirectoryCache } from "./routes/wps.js";
 import { installPiPackages } from "./packages.js";
 import { registerLenientJsonParser } from "./json-body.js";
 import { startSessionSweeper, sweepOrphanTasks } from "./runner.js";
+import { installSkillFromSource } from "./skill-install.js";
 import { ensureSeedSkills } from "./skills.js";
 
 declare module "fastify" {
@@ -30,8 +33,21 @@ async function main(): Promise<void> {
   }
   ensureDirs();
   migrate();
+  ensureDefaultAgent();
   sweepOrphanTasks();
   ensureSeedSkills();
+  // WPS 365 技能包：随仓库内置，启动时自动安装（已存在则跳过，不覆盖用户改动）
+  try {
+    const outcome = await installSkillFromSource("wps365-skill");
+    console.log(`[skills] 内置技能已就绪：${outcome.names.join("、")}（来源 ${outcome.source}）`);
+  } catch (err) {
+    const msg = String((err as Error).message ?? err);
+    if (msg.includes("已存在")) {
+      console.log("[skills] 内置技能 wps365-skill 已安装，跳过");
+    } else {
+      console.warn(`[skills] 内置技能 wps365-skill 自动安装失败：${msg}`);
+    }
+  }
   const piPackages = installPiPackages();
   for (const { id, dest, alreadySynced } of piPackages.installed) {
     console.log(`[packages] pi 插件包 ${id} 就绪（${alreadySynced ? "已是最新" : "已更新"}）：${dest}`);
@@ -40,6 +56,7 @@ async function main(): Promise<void> {
     console.warn(`[packages] 跳过 pi 插件包 ${id}：仓库内未找到包模板（PI_PACKAGES_DIR 未指向仓库根？）`);
   }
   startSessionSweeper();
+  warmDirectoryCache();
 
   const app = Fastify({ logger: true });
   registerLenientJsonParser(app);
@@ -66,12 +83,14 @@ async function main(): Promise<void> {
   registerAuthRoutes(app);
   registerAdminRoutes(app);
   registerTaskRoutes(app);
+  registerVoiceRoutes(app);
+  registerWpsRoutes(app);
 
   // 同机浏览器访问时直接托管桌面端的渲染层构建；目录不存在（如 Docker 镜像）则跳过。
   const webDist = process.env.WEB_DIST ?? path.resolve(process.cwd(), "../desktop/out/renderer");
   if (fs.existsSync(path.join(webDist, "index.html"))) {
     await app.register(fastifyStatic, { root: webDist });
-    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks"];
+    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/skills", "/voice", "/wps"];
     app.setNotFoundHandler((req, reply) => {
       const url = req.raw.url ?? "";
       // 裸 /admin 是管理页入口；管理 API 全部带子路径（/admin/providers 等）

@@ -186,6 +186,7 @@ function deliverableSinceMs(taskId: string): number | undefined {
 
 interface TaskJoinRow {
   id: string;
+  user_id: string;
   prompt: string;
   /** 附件清单与 @ 引用等机器上下文：只随首轮发给模型，展示文本保持用户原文 */
   context_note: string;
@@ -206,7 +207,7 @@ interface TaskJoinRow {
 
 // 任务级模型优先（专家与模型解耦），否则回退专家默认绑定
 const SELECT_RUN_ROW = `
-  SELECT t.id, t.prompt, t.context_note, t.workspace_path, t.custom_workspace, t.session_id,
+  SELECT t.id, t.user_id, t.prompt, t.context_note, t.workspace_path, t.custom_workspace, t.session_id,
          a.name AS agent_name, a.system_prompt, a.high_risk, a.tool_policy,
          COALESCE(t.model_id, a.model_id) AS model_id,
          COALESCE(t.provider_id, a.provider_id) AS provider_id,
@@ -379,7 +380,7 @@ function buildDelegateTool(parentRow: TaskJoinRow): ToolDefinition<typeof Delega
       const skillTools = skillsPrompt ? [readSkillTool(), skillScriptTool()] : [];
       // 子专家不注入 delegate_to_agent，防止递归死循环。会话授权跟父任务走。
       const subAllTools: ToolDefinition[] = [
-        ...workspaceTools(parentRow.workspace_path),
+        ...workspaceTools(parentRow.workspace_path, parentRow.user_id),
         createHostTerminalTool(parentRow.workspace_path),
         ...skillTools,
         ...mcpTools,
@@ -484,7 +485,7 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
   // 专家级工具策略：deny 直接不注入；ask 与默认询问的 terminal 包一层审批。
   // 会话授权在每次执行时现查，本会话允许和撤销都不用重建会话。
   const allTools: ToolDefinition[] = [
-    ...workspaceTools(row.workspace_path),
+    ...workspaceTools(row.workspace_path, row.user_id),
     createHostTerminalTool(row.workspace_path),
     ...skillTools,
     delegateTool,

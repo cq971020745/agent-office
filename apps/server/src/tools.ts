@@ -113,7 +113,7 @@ const AUDIO_MIME_BY_EXT: Record<string, string> = {
 };
 
 /** 每个任务一组：读写都发生在该任务专属目录内；工具失败按 pi 约定直接抛错。 */
-export function workspaceTools(root: string): ToolDefinition[] {
+export function workspaceTools(root: string, userId?: string): ToolDefinition[] {
   const list: ToolDefinition<typeof ListParams> = {
     name: "workspace_list",
     label: "列出工作区文件",
@@ -212,7 +212,7 @@ export function workspaceTools(root: string): ToolDefinition[] {
       const audio = fs.readFileSync(file);
       if (!audio.length) throw new Error(`audio file is empty: ${params.path}`);
       const { transcribeAudioBuffer } = await import("./routes/voice.js");
-      const res = await transcribeAudioBuffer(audio, path.basename(file), mime);
+      const res = await transcribeAudioBuffer(audio, path.basename(file), mime, userId);
       if (params.saveTo?.trim()) {
         const dest = assertInWorkspace(root, params.saveTo.trim());
         fs.mkdirSync(path.dirname(dest), { recursive: true });

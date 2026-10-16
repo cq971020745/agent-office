@@ -4,7 +4,7 @@
 
 ## 1. 产品
 
-任务执行型 AI 办公平台，对标腾讯 WorkBuddy：用户下达任务 → agent 自主拆解执行 → 交付可验收成果物。知识库/RAG 出范围（另一项目）。术语见根目录 `CONTEXT.md`。
+任务执行型 AI 办公平台，对标腾讯 WorkBuddy：用户下达任务 → agent 自主拆解执行 → 交付可验收成果物。登录身份与左侧工作台接入企业知识库（见 ADR 0006、0007）。术语见根目录 `CONTEXT.md`。
 
 ## 2. 技术栈与形态
 
@@ -24,7 +24,7 @@ Electron + Vue 客户端（控制台）
    │  REST(业务) + SSE(围观执行流)
    ▼
 Node 后端 (Fastify + TS) ——单容器
-   ├── 业务 API：自助注册/登录(JWT)、任务 CRUD、定时巡检(ScheduledTask)、成果物上传下载、语音转写(/voice)、管理端(账号查看与重置/key/agent 预置)
+   ├── 业务 API：企业知识库登录(JWT)、任务 CRUD、定时巡检(ScheduledTask)、成果物上传下载、语音转写(/voice)、个人模型供应商、管理端(已登录用户查看 / agent 预置)
    │     └→ SQLite（better-sqlite3，WAL）
    └── pi SDK（进程内，每任务一个 AgentSession）
         ├── customTools：workspace_list / workspace_read / workspace_write / workspace_edit /
@@ -38,7 +38,7 @@ Node 后端 (Fastify + TS) ——单容器
         │   正文与 scripts/references 资源由模型调 read_skill 按需加载（ADR 0005）
         ├── 会话：SessionManager.create(cwd, sessionsDir)，与任务 ID 关联
         ├── 模型：pi-ai 多 provider（DeepSeek/Qwen/Moonshot/任意 OpenAI 兼容），
-        │   自定义 CredentialStore；key 管理员统一配置；compat 按 baseUrl 自动探测
+        │   自定义 CredentialStore；密钥属于当前企业知识库用户；compat 按 baseUrl 自动探测
         ├── compaction 默认开启（reserve 16k / keep 20k）
         └── 事件：session.subscribe → SSE 桥（自写；agent_settled 判定轮次终结）
 ```
@@ -47,13 +47,13 @@ Node 后端 (Fastify + TS) ——单容器
 
 ## 4. MVP 范围（第一版做什么）
 
-1. 账号（登录页自助注册 + 账号密码/JWT；空库首个账号为管理员，后续账号为成员；WPS 用户信息按平台账号同步与缓存）
+1. 账号（企业知识库用户登录 + JWT；超级管理员为管理员，其余为成员；WPS 用户信息挂在该用户上）
 2. 任务：下达（自然语言 + 附件上传至任务工作区）→ 围观（SSE 事件流：文本/思考/工具执行三段式）→ 验收（成果物列表 + 下载）
 3. 官方预置 agent 2~3 个（通用任务、文档生成等），管理员可配 system prompt 与工具集；用户不建 agent（现状已超出该设想：专家 = 管理员配置 + AI 一句话生成 + 专家包市场/导入导出，且可绑定技能子集，见状态注记五/六）
-4. 模型管理端：provider / key / 模型开关，平台统一计 key
+4. 模型：每个用户自己的 provider / key / 启用模型；专家不保存默认模型
 5. 任务列表 / 历史 / 会话回放（走 pi 会话 API）
 
-**明确不做（MVP 当初范围）**：知识库/RAG、用户自建 agent 的完整产品化、IM 入口、计费/多租户。代码执行与本地执行位已在后续批次落地：`run_code` 是无网络 Docker 沙箱，`terminal` 是宿主机命令并默认每次确认。
+**明确不做（MVP 当初范围）**：在本应用重做知识库界面、嵌入知识库用户管理、用户自建 agent 的完整产品化、IM 入口、计费/多租户。企业知识库工作台改为嵌入既有页面（2026-10-16，ADR 0006）。代码执行与本地执行位已在后续批次落地：`run_code` 是无网络 Docker 沙箱，`terminal` 是宿主机命令并默认每次确认。
 
 ## 5. 二期路线（按优先级）
 
@@ -66,6 +66,7 @@ Node 后端 (Fastify + TS) ——单容器
 > 状态注记七（2026-10-14 七批，按 `review-2026-10-14-experts-skills-mcp.md` 路线图完成 P2 全部，评审路线 P0/P1/P2 至此全部收官）：**P2-1 远程 MCP**——连接器 `type` 扩展为 stdio（v1 语义不变）/ http（streamable HTTP：JSON-RPC POST + SSE 流式响应、mcp-session-id 会话协商、mcp-protocol-version 头），请求头支持 `${ENV_NAME}` 凭据引用（令牌不落库，发送时展开，对齐 Codex bearer_token_env_var 思路），`.mcp.json` 导入导出识别 http/sse 条目。**P2-2 专家级工具策略**——`agents.tool_policy` 按精确工具名 / `mcp:连接器:*` 通配 / `mcp:*` 配置 ask / deny（未列出 = 放行），ask 在工具执行前暂停任务并广播审批事件（状态转 awaiting_approval，任务详情页放行/拒绝，5 分钟超时自动拒绝；等待期 30s 心跳续活防 180s 看门狗误杀；deny 直接不注入），workspace_write / fetch_url / run_code / 全部 MCP 工具纳管。**P2-3 平台指令**——`data/agent/AGENTS.md`（`GET/PUT /admin/instructions`，64k 字符上限）以 `<platform_instructions>` 注入所有专家（平台基础规范之后、专家人设之前），形成 平台全局指令 → 专家人设 → 技能清单 的分层提示词。**P2-4 技能演进闭环**——安装/同步即记录内容指纹基线（git 远端短 sha / 内容与目录哈希），`GET /admin/skills/updates` 漂移检测驱动「有更新」徽标（未建基线的存量来源如实显示「未检测」不误报），`POST /admin/skills/sync-all` 批量同步（失败不阻塞），`skill_usage` 表累计 read_skill 与斜杠激活次数（`GET /admin/skills` 携带 usageCount/lastUsedAt）。**P2-5 模型能力元数据**——`model_providers.model_overrides` 按模型 ID 覆盖 contextWindow/maxTokens/reasoning（缺省 128k/32768/无推理；解析宽松容错，坏数据回落默认），替换 runner 硬编码。D8（成员 systemPrompt 可见性）留待后续。
 > 状态注记八（2026-10-15 八批，全工程 UI/UX 焕新 + 语音双轨闭环 + 多专家委派 + 定时巡检 + 评审遗留收官）：**语音听写与音频转写双轨闭环**——`model_providers.asr_model` 支持显式绑定 ASR 模型（三级优先级：显式绑定 > 启用/候选池 ASR 正则命中 > 兜底默认名），`GET /voice/status` 连通性诊断；前端 `VoiceDictate` 升级为 8 段实时动态声波条、300s 长时录音、Esc/取消键、失败保留重试、本地音频文件直传转写，并支持对助手回复进行 TTS 语音播报；新增 `transcribe_audio` 工具供 Agent 直接转写工作区内的音频文件。**多专家协作（子 agent 编排）**——新增 `delegate_to_agent` 工具，主控专家可将专项子任务委派给指定专家（共享当前任务工作区并防递归死循环），原路线第 4 项「子 agent 编排」正式落地。**定时与自动化巡检**——新增 `scheduled_tasks` 表与后台调度引擎（支持 `daily:HH:mm` / `weekly:1..7:HH:mm` / `interval:N`），任务中心内置「⏰ 定时巡检」视图与立即触发能力。**Markdown 与成果物预览升级**——支持 GFM 表格、代码块语法高亮与一键复制、任务列表；`PreviewPanel` 支持 HTML `allow-scripts` 交互预览、CSV 结构化表格与过滤、PDF/Audio 内联预览及系统默认程序打开。**执行轨迹持久化与安全加固**——`task_messages.meta` 持久化每轮 `thinking` 与工具步骤 `steps`；完成 D8（`GET /agents/:id` 对非管理员隐藏 `systemPrompt`）与 MCP 子进程环境变量最小化白名单隔离（`buildSafeMcpEnv`）。
 > 状态注记九（2026-10-15）：宿主终端 `terminal` 使用 Pi 的 PowerShell/Bash，工作目录锁在任务工作区，默认每次确认；`task_session_grants` 支持本会话允许和撤销，专家 `deny` 优先。`pi-quiver@6.13.2` 只启用 `doc_to_md`，二进制附件不再被 `workspace_read` 当文本读出，OLE2 伪 `.docx` 会复制到 `.parsed/*.doc`。`run_code` 继续只做无网络沙箱计算。
+> 状态注记十（2026-10-16）：登录改为企业知识库用户（ADR 0006）。模型供应商按用户隔离，旧的全局供应商整份交给超级管理员（ADR 0007）。侧栏嵌入知识库工作台，桌面 CSP 须放行 API 源上的 iframe。
 
 1. 代码执行工具 + 每任务 Docker 容器（pi 官方 containerization 路线；`run_code` 已提供逐次调用的容器隔离，剩余为每任务常驻容器升级）
 2. 用户自建 agent（模型/提示词/工具组合）

@@ -12,6 +12,7 @@ import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerVoiceRoutes } from "./routes/voice.js";
+import { registerKbEmbedRoutes } from "./kb-embed.js";
 import { registerWpsRoutes, warmDirectoryCache } from "./routes/wps.js";
 import { ensureExternalPiPackages, installPiPackages } from "./packages.js";
 import { registerLenientJsonParser } from "./json-body.js";
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
   });
 
   registerAuthRoutes(app);
+  await registerKbEmbedRoutes(app);
   registerAdminRoutes(app);
   registerTaskRoutes(app);
   registerScheduleRoutes(app);
@@ -99,7 +101,7 @@ async function main(): Promise<void> {
   const webDist = process.env.WEB_DIST ?? path.resolve(process.cwd(), "../desktop/out/renderer");
   if (fs.existsSync(path.join(webDist, "index.html"))) {
     await app.register(fastifyStatic, { root: webDist });
-    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/schedules", "/skills", "/voice", "/wps"];
+    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/schedules", "/skills", "/voice", "/wps", "/kb-embed", "/new-general-rag-kb"];
     app.setNotFoundHandler((req, reply) => {
       const url = req.raw.url ?? "";
       // 裸 /admin 是管理页入口；管理 API 全部带子路径（/admin/providers 等）

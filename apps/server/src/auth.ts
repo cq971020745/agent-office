@@ -1,7 +1,8 @@
 import { scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { db, now, uuid } from "./db.js";
 import type { Role } from "@office/shared";
+import { db, now, uuid } from "./db.js";
+import type { KbSession } from "./kb-auth.js";
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -57,6 +58,55 @@ type AuthedRequest = FastifyRequest & { user?: { sub?: string; role?: Role } };
 export function currentUser(req: FastifyRequest): { id: string; role: Role } {
   const payload = (req as AuthedRequest).user;
   return { id: payload?.sub ?? "", role: payload?.role ?? "member" };
+}
+
+/** 按企业知识库用户编号建立或更新本应用登录身份。密码不在本地校验。 */
+export function upsertKbUser(session: KbSession): { id: string; username: string; role: Role } {
+  const role: Role = session.roleKeys.includes("superadmin") ? "admin" : "member";
+  const existing = db.prepare("SELECT id FROM users WHERE kb_user_id = ?").get(session.userId) as
+    | { id: string }
+    | undefined;
+  if (existing) {
+    db.prepare(
+      "UPDATE users SET username = ?, role = ?, phone = ?, nick_name = ?, kb_access_token = ? WHERE id = ?"
+    ).run(session.userName, role, session.phone, session.nickName, session.accessToken, existing.id);
+    if (role === "admin") claimOrphanProviders(existing.id);
+    return { id: existing.id, username: session.userName, role };
+  }
+  const id = uuid();
+  db.prepare(
+    `INSERT INTO users (id, username, password_hash, role, created_at, kb_user_id, phone, nick_name, kb_access_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    session.userName,
+    hashPassword(randomBytes(24).toString("hex")),
+    role,
+    now(),
+    session.userId,
+    session.phone,
+    session.nickName,
+    session.accessToken
+  );
+  if (role === "admin") claimOrphanProviders(id);
+  return { id, username: session.userName, role };
+}
+
+/** 切换前留下的全局供应商，整份交给当前这位超级管理员。 */
+export function claimOrphanProviders(userId: string): void {
+  db.prepare("UPDATE model_providers SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(userId);
+}
+
+export function getUserPhone(id: string): string {
+  const row = db.prepare("SELECT phone FROM users WHERE id = ?").get(id) as { phone?: string | null } | undefined;
+  return row?.phone ?? "";
+}
+
+export function getKbAccessToken(id: string): string {
+  const row = db.prepare("SELECT kb_access_token FROM users WHERE id = ?").get(id) as
+    | { kb_access_token?: string | null }
+    | undefined;
+  return row?.kb_access_token ?? "";
 }
 
 export function requireAdmin(req: FastifyRequest, reply: FastifyReply, done: () => void): void {

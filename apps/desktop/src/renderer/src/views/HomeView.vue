@@ -155,17 +155,8 @@ watch(plusOpen, (open) => {
 });
 onBeforeUnmount(() => window.removeEventListener("keydown", onPlusKey));
 
-/** 专家切换：优先预选该专家的默认模型；没有默认则尝试恢复上次偏好，最后取第一个可用模型 */
+/** 恢复上次在本机选过、且仍在当前用户模型列表里的模型；否则取第一个可用模型。 */
 function syncModelWithAgent(): void {
-  const a = selectedAgent.value;
-  if (a?.providerId && a?.modelId) {
-    const known = modelOptions.value.some((x) => x.providerId === a.providerId && x.models.includes(a.modelId));
-    if (known) {
-      selProviderId.value = a.providerId;
-      selModelId.value = a.modelId;
-      return;
-    }
-  }
   if (!selProviderId.value || !selModelId.value) {
     try {
       const saved = JSON.parse(localStorage.getItem(LAST_MODEL_KEY) || "null") as { providerId?: string; modelId?: string } | null;

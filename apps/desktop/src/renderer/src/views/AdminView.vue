@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { isAsrModel } from "@office/shared";
 import type { AdminProvider, AdminUser, VoiceStatus } from "../api";
 import {
@@ -24,7 +25,17 @@ import { toast, toastError } from "../composables/toast";
 import { timeAgo } from "../utils/format";
 
 type Tab = "providers" | "users";
-const tab = ref<Tab>("providers");
+const route = useRoute();
+const tab = ref<Tab>(route.path === "/admin" ? "users" : "providers");
+const visibleTabs = computed(() =>
+  TABS.filter((item) => (route.path === "/admin" ? item.key === "users" : item.key === "providers"))
+);
+watch(
+  () => route.path,
+  (path) => {
+    tab.value = path === "/admin" ? "users" : "providers";
+  }
+);
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "providers", label: "模型供应商" },
@@ -44,12 +55,16 @@ const counts = computed<Record<Tab, number>>(() => ({
 }));
 
 async function refresh(): Promise<void> {
+  const modelsPage = route.path !== "/admin";
   try {
-    [providers.value, users.value, voiceStatus.value] = await Promise.all([
+    const [nextProviders, nextUsers, nextVoice] = await Promise.all([
       listAdminProviders(),
-      listAdminUsers(),
+      modelsPage ? Promise.resolve([] as AdminUser[]) : listAdminUsers(),
       getVoiceStatus().catch(() => null),
     ]);
+    providers.value = nextProviders;
+    if (!modelsPage) users.value = nextUsers;
+    voiceStatus.value = nextVoice;
     error.value = "";
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载失败";
@@ -335,13 +350,13 @@ onMounted(refresh);
 
 <template>
   <div class="page">
-    <h2 class="page-title">管理后台</h2>
-    <p class="sub">供应商与已注册用户在这里维护；专家的创建与删除已移至「专家·技能·连接器」页。</p>
+    <h2 class="page-title">{{ route.path === "/admin" ? "管理后台" : "模型供应商" }}</h2>
+    <p class="sub">{{ route.path === "/admin" ? "查看已登录过的企业知识库用户。密码在知识库里管理。" : "这里配置你自己的模型供应商、密钥和启用的模型。" }}</p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <div class="tabs">
       <button
-        v-for="t in TABS"
+        v-for="t in visibleTabs"
         :key="t.key"
         type="button"
         class="tab"
@@ -500,14 +515,12 @@ onMounted(refresh);
             <td class="strong">{{ u.username }}</td>
             <td><span class="status" :class="u.role === 'admin' ? 'running' : 'cancelled'">{{ u.role === "admin" ? "管理员" : "成员" }}</span></td>
             <td class="time">{{ timeAgo(u.createdAt) }}</td>
-            <td class="row-actions">
-              <button type="button" @click="openReset(u)">重置密码</button>
-            </td>
+            <td></td>
           </tr>
         </tbody>
       </table>
-      <div v-else class="empty">还没有已注册用户</div>
-      <p class="hint">账号由用户在登录页自行注册；管理员仅在必要时查看账号或重置密码。</p>
+      <div v-else class="empty">还没有登录过的企业知识库用户</div>
+      <p class="hint">账号来自企业知识库。超级管理员在本应用里是管理员，其余人是成员。密码请到知识库修改。</p>
     </section>
 
     <!-- 重置密码弹窗 -->

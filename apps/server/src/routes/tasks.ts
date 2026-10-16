@@ -209,10 +209,10 @@ export function registerTaskRoutes(app: FastifyInstance): void {
   });
 
   // 派发时可选的模型：所有启用供应商下的「可用模型」；向量/重排等非对话模型不进选择列表
-  app.get("/models", { onRequest: [app.authenticate] }, async () => {
+  app.get("/models", { onRequest: [app.authenticate] }, async (req) => {
     const rows = db
-      .prepare("SELECT id, name, enabled_models FROM model_providers WHERE enabled = 1 ORDER BY created_at")
-      .all() as { id: string; name: string; enabled_models: string }[];
+      .prepare("SELECT id, name, enabled_models FROM model_providers WHERE enabled = 1 AND user_id = ? ORDER BY created_at")
+      .all(currentUser(req).id) as { id: string; name: string; enabled_models: string }[];
     return rows.map((r) => ({
       providerId: r.id,
       providerName: r.name,
@@ -353,30 +353,17 @@ export function registerTaskRoutes(app: FastifyInstance): void {
         if (!agent) return reply.code(400).send({ error: "暂无可用专家，请先在专家页创建" });
       }
 
-      // 模型选择：请求显式指定优先（专家与模型解耦），否则回退专家默认
-      let providerId = body.providerId?.trim() ?? "";
-      let modelId = body.modelId?.trim() ?? "";
-      if (providerId || modelId) {
-        if (!providerId || !modelId) return reply.code(400).send({ error: "providerId 与 modelId 需同时提供" });
-        const p = db.prepare("SELECT enabled, enabled_models FROM model_providers WHERE id = ?").get(providerId) as
-          | { enabled: number; enabled_models: string }
-          | undefined;
-        if (!p || !p.enabled) return reply.code(400).send({ error: "模型供应商不可用" });
-        if (!parseStringArray(p.enabled_models).includes(modelId)) {
-          return reply.code(400).send({ error: "模型不在该供应商的可用列表中" });
-        }
-      } else {
-        providerId = agent.provider_id ?? "";
-        modelId = agent.model_id ?? "";
-        if (providerId && modelId) {
-          const p = db.prepare("SELECT enabled FROM model_providers WHERE id = ?").get(providerId);
-          if (!p) return reply.code(400).send({ error: "专家默认模型所在的供应商已删除，请重新选择模型" });
-          if (!(p as { enabled: number }).enabled) {
-            return reply.code(400).send({ error: "专家默认模型所在的供应商已停用，请重新选择模型" });
-          }
-        }
-      }
+      // 模型只从当前用户自己启用的供应商里选，不再回退到专家上的默认模型
+      const providerId = body.providerId?.trim() ?? "";
+      const modelId = body.modelId?.trim() ?? "";
       if (!providerId || !modelId) return reply.code(400).send({ error: "请先选择模型" });
+      const p = db
+        .prepare("SELECT enabled, enabled_models FROM model_providers WHERE id = ? AND user_id = ?")
+        .get(providerId, user.id) as { enabled: number; enabled_models: string } | undefined;
+      if (!p || !p.enabled) return reply.code(400).send({ error: "模型供应商不可用" });
+      if (!parseStringArray(p.enabled_models).includes(modelId)) {
+        return reply.code(400).send({ error: "模型不在该供应商的可用列表中" });
+      }
 
       const id = uuid();
       // 工作目录：用户显式选择的目录 > 专家常驻文件夹（WorkBuddy 式，产出沉淀在专家目录）> 平台隔离工作区

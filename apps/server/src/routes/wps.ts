@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { WpsContacts, WpsDirectoryEntry, WpsMentionItem, WpsMentionType, WpsProfile } from "@office/shared";
-import { currentUser } from "../auth.js";
+import { currentUser, getUserPhone } from "../auth.js";
 import { db, now } from "../db.js";
 import { extractLastJsonBlock, runSkillScript, wpsConfigured, WPS_SKILL_NAME } from "../skill-scripts.js";
 
@@ -8,6 +8,12 @@ import { extractLastJsonBlock, runSkillScript, wpsConfigured, WPS_SKILL_NAME } f
 
 /** 剥掉搜索高亮标记 <em>x</em> → x */
 const clean = (s: unknown): string => String(s ?? "").replace(/<\/?em>/g, "").trim();
+
+/** 完整 11 位手机号才参与比对；空号或脱敏号返回空。 */
+function fullPhone(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  return /^1\d{10}$/.test(digits) ? digits : "";
+}
 
 type AnyRecord = Record<string, unknown>;
 
@@ -292,7 +298,13 @@ export function registerWpsRoutes(app: FastifyInstance): void {
         avatar: clean(me.avatar),
         syncedAt: now(),
       };
-      upsertProfile(currentUser(req).id, profile);
+      const user = currentUser(req);
+      const kbPhone = fullPhone(getUserPhone(user.id));
+      const wpsPhone = fullPhone(profile.phone);
+      if (kbPhone && wpsPhone && kbPhone !== wpsPhone) {
+        return reply.code(409).send({ error: "紫金协作手机号与企业知识库账号不一致，未关联" });
+      }
+      upsertProfile(user.id, profile);
       return { configured: true, profile };
     } catch (err) {
       return reply.code(502).send({ error: `WPS 脚本执行失败：${String((err as Error).message ?? err)}` });

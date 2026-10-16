@@ -151,13 +151,13 @@ export function triggerScheduledTaskNow(scheduleId: string): { taskId: string } 
     | undefined;
   if (!row) throw new Error("定时任务不存在");
 
-  let providerId = row.provider_id || row.agent_provider_id || "";
-  let modelId = row.model_id || row.agent_model_id || "";
+  let providerId = row.provider_id || "";
+  let modelId = row.model_id || "";
   if (!providerId || !modelId) {
-    // 兜底选用第一个启用供应商的第一个可用模型
+    // 只回退到这条巡检所属用户自己的供应商，不用专家或其他人的模型
     const p = db
-      .prepare("SELECT id, enabled_models FROM model_providers WHERE enabled = 1 ORDER BY created_at LIMIT 1")
-      .get() as { id: string; enabled_models: string } | undefined;
+      .prepare("SELECT id, enabled_models FROM model_providers WHERE enabled = 1 AND user_id = ? ORDER BY created_at LIMIT 1")
+      .get(row.user_id) as { id: string; enabled_models: string } | undefined;
     if (p) {
       try {
         const arr = JSON.parse(p.enabled_models);
@@ -283,6 +283,25 @@ export function registerScheduleRoutes(app: FastifyInstance): void {
       agentId = def.id;
     }
 
+    const providerId = body.providerId?.trim() ?? "";
+    const modelId = body.modelId?.trim() ?? "";
+    if (providerId || modelId) {
+      if (!providerId || !modelId) return reply.code(400).send({ error: "providerId 与 modelId 需同时提供" });
+      const owned = db
+        .prepare("SELECT enabled, enabled_models FROM model_providers WHERE id = ? AND user_id = ?")
+        .get(providerId, user.id) as { enabled: number; enabled_models: string } | undefined;
+      if (!owned || !owned.enabled) return reply.code(400).send({ error: "模型供应商不可用" });
+      let models: unknown = [];
+      try {
+        models = JSON.parse(owned.enabled_models);
+      } catch {
+        models = [];
+      }
+      if (!Array.isArray(models) || !models.includes(modelId)) {
+        return reply.code(400).send({ error: "模型不在该供应商的可用列表中" });
+      }
+    }
+
     const title = body.title?.trim() || prompt.slice(0, 32);
     const enabled = body.enabled !== false;
     const nextRunAt = enabled ? computeNextRunAt(scheduleExpr) : null;
@@ -295,8 +314,8 @@ export function registerScheduleRoutes(app: FastifyInstance): void {
       id,
       user.id,
       agentId,
-      body.providerId?.trim() || null,
-      body.modelId?.trim() || null,
+      providerId || null,
+      modelId || null,
       title,
       prompt,
       scheduleExpr,

@@ -238,6 +238,14 @@ async function submitWpsSync(): Promise<void> {
           <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3" /><circle cx="8.5" cy="11" r="1.5" /><circle cx="15.5" cy="11" r="1.5" /><path d="M8 15.5h8" /></svg>
           <span v-if="!sidebarCollapsed">专家·技能·连接器</span>
         </RouterLink>
+        <RouterLink to="/kb" class="nav-item" active-class="active" :title="sidebarCollapsed ? '企业知识库' : undefined">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>
+          <span v-if="!sidebarCollapsed">企业知识库</span>
+        </RouterLink>
+        <RouterLink to="/models" class="nav-item" active-class="active" :title="sidebarCollapsed ? '模型供应商' : undefined">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
+          <span v-if="!sidebarCollapsed">模型供应商</span>
+        </RouterLink>
         <RouterLink v-if="isAdmin" to="/admin" class="nav-item" active-class="active" :title="sidebarCollapsed ? '管理后台' : undefined">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
           <span v-if="!sidebarCollapsed">管理后台</span>
@@ -304,9 +312,9 @@ async function submitWpsSync(): Promise<void> {
         </button>
         <button
           class="icon-btn"
-          title="修改密码"
-          aria-label="修改密码"
-          @click="openPwd"
+          title="模型供应商"
+          aria-label="模型供应商"
+          @click="router.push('/models')"
         >
           <svg class="icon" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
         </button>

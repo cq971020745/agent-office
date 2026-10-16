@@ -90,8 +90,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function login(username: string, password: string) {
-  return request<AuthResponse>("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+export function fetchCaptcha() {
+  return request<{ enabled: boolean; uuid: string; img: string }>("/auth/captcha");
+}
+
+export function login(username: string, password: string, code: string, uuid: string) {
+  return request<AuthResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password, code, uuid }),
+  });
 }
 
 export function register(username: string, password: string) {

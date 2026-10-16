@@ -1,82 +1,63 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { login, register, resetPassword, setToken, setUsername } from "../api";
+import { fetchCaptcha, login, setToken, setUsername } from "../api";
 
 const router = useRouter();
-type AuthMode = "login" | "register" | "reset";
-const mode = ref<AuthMode>("login");
 const username = ref("");
 const password = ref("");
-const passwordConfirm = ref("");
+const code = ref("");
+const captchaUuid = ref("");
+const captchaImg = ref("");
 const error = ref("");
 const busy = ref(false);
 
-const titles: Record<AuthMode, string> = {
-  login: "欢迎回来",
-  register: "创建个人账号",
-  reset: "重置密码",
-};
-const subtitles: Record<AuthMode, string> = {
-  login: "登录以继续使用",
-  register: "注册后可同步自己的 WPS 365 用户信息",
-  reset: "忘记密码时，在本机为已有账号设置新密码",
-};
+async function refreshCaptcha(): Promise<void> {
+  try {
+    const captcha = await fetchCaptcha();
+    captchaUuid.value = captcha.uuid;
+    captchaImg.value = captcha.img ? `data:image/gif;base64,${captcha.img}` : "";
+    code.value = "";
+  } catch (err) {
+    error.value = authErrorMessage(err);
+  }
+}
+
+onMounted(() => {
+  void refreshCaptcha();
+});
 
 async function submit(): Promise<void> {
   const name = username.value.trim();
-  const settingNewPassword = mode.value === "register" || mode.value === "reset";
   if (!name || !password.value) {
-    error.value = settingNewPassword && mode.value === "reset" ? "请输入用户名和新密码" : "请输入用户名和密码";
+    error.value = "请输入用户名和密码";
     return;
   }
-  if (settingNewPassword && password.value.length < 6) {
-    error.value = "密码至少 6 位";
-    return;
-  }
-  if (settingNewPassword && password.value !== passwordConfirm.value) {
-    error.value = "两次输入的密码不一致";
+  if (!code.value.trim()) {
+    error.value = "请输入验证码";
     return;
   }
   busy.value = true;
   error.value = "";
   try {
-    const res =
-      mode.value === "login"
-        ? await login(name, password.value)
-        : mode.value === "register"
-          ? await register(name, password.value)
-          : await resetPassword(name, password.value);
+    const res = await login(name, password.value, code.value.trim(), captchaUuid.value);
     setToken(res.token);
     setUsername(res.user.username);
     void router.push("/");
   } catch (err) {
     error.value = authErrorMessage(err);
+    void refreshCaptcha();
   } finally {
     busy.value = false;
   }
 }
 
-function switchMode(next: AuthMode): void {
-  mode.value = next;
-  password.value = "";
-  passwordConfirm.value = "";
-  error.value = "";
-}
-
-// 服务端返回的是英文错误码，映射成中文提示
 function authErrorMessage(err: unknown): string {
   if (err instanceof Error) {
-    if (err.message === "username taken") return "该用户名已被注册，请直接登录";
-    if (err.message === "invalid credentials") return "用户名或密码错误";
-    if (err.message === "password must be at least 6 characters") return "密码至少 6 位";
-    if (err.message === "user not found") return "没有这个用户名，请先注册";
-    if (err.message === "password reset is only available on this computer") {
-      return "只能在运行服务的这台电脑上重置密码";
-    }
     if (/failed to fetch|networkerror|load failed/i.test(err.message)) {
       return "无法连接服务器，请确认服务已启动";
     }
+    if (err.message) return err.message;
   }
   return "请求失败，请稍后重试";
 }
@@ -115,40 +96,29 @@ const FEATURES = [
 
     <main class="form-panel">
       <form class="box" @submit.prevent="submit">
-        <h2>{{ titles[mode] }}</h2>
-        <p class="sub">{{ subtitles[mode] }}</p>
+        <h2>欢迎回来</h2>
+        <p class="sub">使用企业知识库账号登录</p>
         <label>
           <span>用户名</span>
-          <input v-model="username" placeholder="用户名" autocomplete="username" />
+          <input v-model="username" placeholder="知识库登录账号" autocomplete="username" />
         </label>
         <div class="field">
           <div class="field-head">
-            <span>{{ mode === "login" ? "密码" : "新密码" }}</span>
-            <button v-if="mode === 'login'" type="button" class="forgot" @click="switchMode('reset')">忘记密码？</button>
+            <span>密码</span>
           </div>
-          <input
-            v-model="password"
-            type="password"
-            :placeholder="mode === 'login' ? '密码' : '至少 6 位'"
-            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
-            :minlength="mode === 'login' ? undefined : 6"
-          />
+          <input v-model="password" type="password" placeholder="知识库密码" autocomplete="current-password" />
         </div>
-        <label v-if="mode !== 'login'">
-          <span>确认密码</span>
-          <input
-            v-model="passwordConfirm"
-            type="password"
-            placeholder="再次输入密码"
-            autocomplete="new-password"
-            minlength="6"
-          />
+        <label>
+          <span>验证码</span>
+          <span class="captcha-row">
+            <input v-model="code" placeholder="计算结果" autocomplete="off" />
+            <button type="button" class="captcha" title="换一张" @click="refreshCaptcha">
+              <img v-if="captchaImg" :src="captchaImg" alt="验证码" />
+              <span v-else>获取验证码</span>
+            </button>
+          </span>
         </label>
-        <button class="primary" type="submit" :disabled="busy">
-          {{ mode === "login" ? "登 录" : mode === "register" ? "注册并登录" : "重置并登录" }}
-        </button>
-        <button v-if="mode === 'login'" type="button" class="link" @click="switchMode('register')">没有账号？立即注册</button>
-        <button v-else type="button" class="link" @click="switchMode('login')">已有账号？去登录</button>
+        <button class="primary" type="submit" :disabled="busy">登 录</button>
         <p v-if="error" class="error">{{ error }}</p>
       </form>
     </main>
@@ -317,6 +287,30 @@ label span,
 }
 .forgot:hover {
   color: var(--accent-strong);
+}
+.captcha-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.captcha-row input {
+  flex: 1;
+}
+.captcha {
+  width: 112px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line, #d9e2dc);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+}
+.captcha img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .error {
   margin: 0;

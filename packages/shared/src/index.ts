@@ -19,6 +19,9 @@ export interface AuthResponse {
 export interface LoginRequest {
   username: string;
   password: string;
+  /** 企业知识库验证码 */
+  code?: string;
+  uuid?: string;
 }
 
 export interface ModelProvider {

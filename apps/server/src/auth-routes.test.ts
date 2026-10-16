@@ -1,4 +1,4 @@
-// auth-routes.test.ts：change-password 与 CORS 预检的应用级测试。
+// auth-routes.test.ts：企业知识库登录与 CORS 预检的应用级测试。
 // index.ts 的 main() 导入即启动，无法直接复用，这里按其配置复刻最小 app；
 // 导入前隔离 DATA_DIR（模块链上有 db.js）。
 import fs from "node:fs";
@@ -10,7 +10,8 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "office-auth-routes
 const { default: Fastify } = await import("fastify");
 const { default: cors } = await import("@fastify/cors");
 const { default: jwt } = await import("@fastify/jwt");
-const { migrate } = await import("./db.js");
+const { db, migrate } = await import("./db.js");
+const { setKbLoginForTests } = await import("./kb-auth.js");
 const { registerAuthRoutes } = await import("./routes/auth.js");
 const { registerLenientJsonParser } = await import("./json-body.js");
 import assert from "node:assert/strict";
@@ -84,167 +85,69 @@ describe("无请求体的 DELETE（Content-Type: json 但 body 为空）", () =>
   });
 });
 
-describe("用户自助注册与修改密码", () => {
-  let token = "";
-
-  it("首个注册用户成为管理员", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/register",
-      payload: { username: " admin ", password: "old-pass-1" },
-    });
-    assert.equal(res.statusCode, 200);
-    const body = res.json();
-    token = body.token;
-    assert.ok(token);
-    assert.equal(body.user.username, "admin");
-    assert.equal(body.user.role, "admin");
-  });
-
-  it("后续用户可自行注册且默认为普通成员", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/register",
-      payload: { username: "member", password: "member-pass-1" },
-    });
-    assert.equal(res.statusCode, 200);
-    const body = res.json();
-    assert.ok(body.token);
-    assert.equal(body.user.username, "member");
-    assert.equal(body.user.role, "member");
-  });
-
-  it("自助注册的成员可直接登录", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/login",
-      payload: { username: "member", password: "member-pass-1" },
-    });
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.json().user.role, "member");
-  });
-
-  it("重复用户名返回 409", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/register",
-      payload: { username: "member", password: "another-pass" },
-    });
-    assert.equal(res.statusCode, 409);
-  });
-
-  it("注册密码少于 6 位返回 400", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/register",
-      payload: { username: "short-password", password: "12345" },
-    });
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("不传旧密码也能改密", async () => {
-    const res = await app.inject({
+describe("企业知识库登录", () => {
+  it("不再接受自助注册、改密和重置密码", async () => {
+    for (const url of ["/auth/register", "/auth/reset-password"]) {
+      const res = await app.inject({ method: "POST", url, payload: { username: "a", password: "123456" } });
+      assert.equal(res.statusCode, 410);
+    }
+    const token = app.jwt.sign({ sub: "u1", role: "member" });
+    const changed = await app.inject({
       method: "POST",
       url: "/auth/change-password",
       headers: { authorization: `Bearer ${token}` },
-      payload: { newPassword: "new-pass-9" },
+      payload: { newPassword: "123456" },
     });
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.json(), { ok: true });
+    assert.equal(changed.statusCode, 410);
+    const anon = await app.inject({ method: "POST", url: "/auth/change-password", payload: { newPassword: "123456" } });
+    assert.equal(anon.statusCode, 401);
   });
 
-  it("新密码可登录", async () => {
-    const res = await app.inject({ method: "POST", url: "/auth/login", payload: { username: "admin", password: "new-pass-9" } });
-    assert.equal(res.statusCode, 200);
-    assert.ok(res.json().token);
-  });
-
-  it("旧密码已失效（改密即时生效）", async () => {
-    const res = await app.inject({ method: "POST", url: "/auth/login", payload: { username: "admin", password: "old-pass-1" } });
-    assert.equal(res.statusCode, 401);
-  });
-
-  it("缺 newPassword 返回 400", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/change-password",
-      headers: { authorization: `Bearer ${token}` },
-      payload: {},
+  it("超级管理员登录后领走尚未归属的供应商，成员登录不会领走", async () => {
+    db.prepare(
+      "INSERT INTO model_providers (id, name, base_url, api_key, enabled, created_at) VALUES ('orphan-p', '旧供应商', 'http://example.test', 'sk-test', 1, '2026-01-01')"
+    ).run();
+    setKbLoginForTests(async (input) => {
+      if (input.username === "member") {
+        return {
+          accessToken: "kb-member",
+          userId: "kb-member",
+          userName: "member",
+          phone: "13800000001",
+          nickName: "成员",
+          roleKeys: ["test2"],
+        };
+      }
+      return {
+        accessToken: "kb-admin",
+        userId: "kb-admin",
+        userName: "super",
+        phone: "13800000002",
+        nickName: "超管",
+        roleKeys: ["superadmin"],
+      };
     });
-    assert.equal(res.statusCode, 400);
-  });
 
-  it("新密码过短返回 400", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/change-password",
-      headers: { authorization: `Bearer ${token}` },
-      payload: { newPassword: "123" },
-    });
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("未登录改密返回 401", async () => {
-    const res = await app.inject({ method: "POST", url: "/auth/change-password", payload: { newPassword: "whatever-1" } });
-    assert.equal(res.statusCode, 401);
-  });
-
-  it("本机可按用户名重置忘记的密码并登录", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/reset-password",
-      payload: { username: " admin ", newPassword: "reset-pass-1" },
-    });
-    assert.equal(res.statusCode, 200);
-    const body = res.json();
-    assert.equal(body.user.username, "admin");
-    assert.equal(body.user.role, "admin");
-    assert.ok(body.token);
-    const loginRes = await app.inject({
+    const memberRes = await app.inject({
       method: "POST",
       url: "/auth/login",
-      payload: { username: "admin", password: "reset-pass-1" },
+      payload: { username: "member", password: "secret", code: "1", uuid: "u" },
     });
-    assert.equal(loginRes.statusCode, 200);
-    const oldRes = await app.inject({
+    assert.equal(memberRes.statusCode, 200);
+    assert.equal(memberRes.json().user.role, "member");
+    const stillOrphan = db.prepare("SELECT user_id FROM model_providers WHERE id = 'orphan-p'").get() as { user_id: string | null };
+    assert.equal(stillOrphan.user_id, null);
+
+    const adminRes = await app.inject({
       method: "POST",
       url: "/auth/login",
-      payload: { username: "admin", password: "new-pass-9" },
+      payload: { username: "super", password: "secret", code: "1", uuid: "u" },
     });
-    assert.equal(oldRes.statusCode, 401);
-  });
-
-  it("重置不存在的用户返回 404", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/reset-password",
-      payload: { username: "nobody", newPassword: "reset-pass-1" },
-    });
-    assert.equal(res.statusCode, 404);
-  });
-
-  it("重置密码少于 6 位返回 400", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/reset-password",
-      payload: { username: "admin", newPassword: "12345" },
-    });
-    assert.equal(res.statusCode, 400);
-  });
-
-  it("其他电脑不能重置密码", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/auth/reset-password",
-      remoteAddress: "203.0.113.10",
-      payload: { username: "admin", newPassword: "stolen-pass-1" },
-    });
-    assert.equal(res.statusCode, 403);
-    const loginRes = await app.inject({
-      method: "POST",
-      url: "/auth/login",
-      payload: { username: "admin", password: "reset-pass-1" },
-    });
-    assert.equal(loginRes.statusCode, 200);
+    assert.equal(adminRes.statusCode, 200);
+    assert.equal(adminRes.json().user.role, "admin");
+    const adminId = adminRes.json().user.id as string;
+    const claimed = db.prepare("SELECT user_id FROM model_providers WHERE id = 'orphan-p'").get() as { user_id: string };
+    assert.equal(claimed.user_id, adminId);
+    setKbLoginForTests(null);
   });
 });

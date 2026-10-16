@@ -1388,14 +1388,14 @@ onMounted(() => {
                 <em>开启后，派发的任务会先由 Agent 生成执行清单（运行哪些命令、增删哪些文件），用户逐项确认后才会真正执行。</em>
               </span>
             </label>
-            <label class="field">
+            <label v-if="false" class="field">
               <span>默认供应商</span>
               <select v-model="cProvider" @change="onProviderChange">
                 <option value="">不绑定（派发任务时再选择模型）</option>
                 <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.enabled ? "" : "（已停用）" }}</option>
               </select>
             </label>
-            <label class="field model-field">
+            <label v-if="false" class="field model-field">
               <span>默认模型</span>
               <input
                 v-model="cModel"
@@ -1623,14 +1623,14 @@ onMounted(() => {
                 </div>
               </div>
             </template>
-            <label class="field">
+            <label v-if="false" class="field">
               <span>默认供应商</span>
               <select v-model="packProvider" @change="onPackProviderChange">
                 <option value="">不绑定（派发任务时再选择模型）</option>
                 <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}{{ p.enabled ? "" : "（已停用）" }}</option>
               </select>
             </label>
-            <label class="field">
+            <label v-if="false" class="field">
               <span>默认模型</span>
               <select v-model="packModel" :disabled="!packProvider || packModelsLoading">
                 <option value="">不绑定</option>

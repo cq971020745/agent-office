@@ -1,0 +1,25 @@
+# Agent Office
+
+领域术语以 [CONTEXT.md](CONTEXT.md) 为准，已确认的取舍以 [docs/adr/](docs/adr/) 为准。这里只写下次改代码时必须遵守的边界。
+
+## 登录与权限
+
+- 登录身份是企业知识库用户。不要恢复自助注册、本地改密或管理员重置密码。
+- 本应用管理员只等于知识库角色 `superadmin`。部门管理员不是本应用管理员。
+- 环境变量 `KB_BASE_URL` 默认 `http://10.50.11.17/new-general-rag-kb`。
+
+## 模型
+
+- `model_providers.user_id` 归属当前用户。不要做全员共用供应商，也不要把密钥复制给所有人。
+- 专家不保存 `provider_id` / `model_id`。派发必须使用当前用户自己启用的供应商和模型。
+- Base URL 由用户填写，拉取列表只请求 `{baseUrl}/models`。不要在代码里自动补 `/v1`。
+
+## 企业知识库工作台
+
+- 侧栏嵌入既有工作台（知识空间、文档、问答）。不要重做这些页面，也不要嵌入 `/system/user`。
+- 知识库页面把 `Admin-Token` 放在 localStorage，所以必须由本服务代理 `/new-general-rag-kb`。
+- `apps/desktop/src/renderer/index.html` 的 CSP `frame-src` 必须放行 API 源，否则工作台是空白页。
+
+## 紫金协作
+
+- 两边都是完整 11 位手机号且不一致时，拒绝关联。空号或脱敏时仍保存用户同步来的紫金协作用户编号。

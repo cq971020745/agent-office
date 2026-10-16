@@ -1,10 +1,10 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fs from "node:fs";
 import path from "node:path";
 import { isChatModel, type GeneratedAgent } from "@office/shared";
 import { db, now, uuid } from "../db.js";
 import { paths } from "../config.js";
-import { getUserById, requireAdmin, updatePassword } from "../auth.js";
+import { currentUser, requireAdmin } from "../auth.js";
 import {
   createSkill,
   deleteAgentSkillBinding,
@@ -278,17 +278,9 @@ interface AgentInput {
 /** 校验并落库一个专家（手动创建、专家包安装、专家包导入共用）。返回新专家 id。 */
 function insertAgent(body: AgentInput): string {
   if (!body.name || !body.systemPrompt) throw new Error("name 和 systemPrompt 必填");
-  // 默认模型可选（专家与模型解耦）；提供则必须成对且在供应商可用列表里
-  const providerId = body.providerId?.trim() ?? "";
-  const modelId = body.modelId?.trim() ?? "";
-  if (!!providerId !== !!modelId) throw new Error("providerId 与 modelId 需同时提供（或不提供）");
-  if (providerId) {
-    const p = db.prepare("SELECT enabled_models FROM model_providers WHERE id = ?").get(providerId) as
-      | { enabled_models: string }
-      | undefined;
-    if (!p) throw new Error("unknown providerId");
-    if (!parseModels(p.enabled_models).includes(modelId)) throw new Error("模型不在该供应商的可用列表中");
-  }
+  // 专家不保存供应商或默认模型，派发时由用户从自己的模型里选
+  const providerId = "";
+  const modelId = "";
   const tags = (body.tags ?? []).map((t) => String(t).trim()).filter(Boolean).slice(0, 8);
   const toolPolicy = JSON.stringify(sanitizeToolPolicy(body.toolPolicy));
   const id = uuid();
@@ -302,20 +294,35 @@ function insertAgent(body: AgentInput): string {
   return id;
 }
 
+/** 带 :id 的供应商接口只允许操作当前用户自己的配置。列表和新建没有 id，直接放行。 */
+function assertOwnProvider(req: FastifyRequest, reply: FastifyReply, done: () => void): void {
+  const id = (req.params as { id?: string }).id;
+  if (!id) {
+    done();
+    return;
+  }
+  const row = db.prepare("SELECT id FROM model_providers WHERE id = ? AND user_id = ?").get(id, currentUser(req).id);
+  if (!row) {
+    reply.code(404).send({ error: "provider not found" });
+    return;
+  }
+  done();
+}
+
 export function registerAdminRoutes(app: FastifyInstance): void {
-  app.get("/admin/providers", { onRequest: [app.authenticate], preHandler: requireAdmin }, async () => {
+  app.get("/admin/providers", { onRequest: [app.authenticate] }, async (req) => {
     const rows = db
       .prepare(
-        "SELECT id, name, base_url, api_key, enabled, models, enabled_models, models_fetched_at, model_overrides, asr_model FROM model_providers ORDER BY created_at"
+        "SELECT id, name, base_url, api_key, enabled, models, enabled_models, models_fetched_at, model_overrides, asr_model FROM model_providers WHERE user_id = ? ORDER BY created_at"
       )
-      .all() as unknown as ProviderRow[];
+      .all(currentUser(req).id) as unknown as ProviderRow[];
     return rows.map(toProviderDto);
   });
 
   // 拉取供应商模型列表：实时请求 + 缓存
   app.get(
     "/admin/providers/:id/models",
-    { onRequest: [app.authenticate], preHandler: requireAdmin },
+    { onRequest: [app.authenticate], preHandler: assertOwnProvider },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const row = db
@@ -342,19 +349,19 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     }
   );
 
-  app.post("/admin/providers", { onRequest: [app.authenticate], preHandler: requireAdmin }, async (req, reply) => {
+  app.post("/admin/providers", { onRequest: [app.authenticate] }, async (req, reply) => {
     const body = req.body as { name?: string; baseUrl?: string; apiKey?: string };
     if (!body.name || !body.baseUrl || !body.apiKey) {
       return reply.code(400).send({ error: "name, baseUrl and apiKey are required" });
     }
     const id = uuid();
     db.prepare(
-      "INSERT INTO model_providers (id, name, base_url, api_key, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)"
-    ).run(id, body.name, body.baseUrl, body.apiKey, now());
+      "INSERT INTO model_providers (id, name, base_url, api_key, enabled, user_id, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)"
+    ).run(id, body.name, body.baseUrl, body.apiKey, currentUser(req).id, now());
     return reply.code(201).send({ id });
   });
 
-  app.patch("/admin/providers/:id", { onRequest: [app.authenticate], preHandler: requireAdmin }, async (req, reply) => {
+  app.patch("/admin/providers/:id", { onRequest: [app.authenticate], preHandler: assertOwnProvider }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = req.body as {
       enabled?: boolean;
@@ -396,7 +403,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     return reply.send({ ok: true });
   });
 
-  app.delete("/admin/providers/:id", { onRequest: [app.authenticate], preHandler: requireAdmin }, async (req, reply) => {
+  app.delete("/admin/providers/:id", { onRequest: [app.authenticate], preHandler: assertOwnProvider }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const row = db.prepare("SELECT id FROM model_providers WHERE id = ?").get(id);
     if (!row) return reply.code(404).send({ error: "provider not found" });
@@ -409,7 +416,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   // 手动维护模型：直接添加为可用模型（候选与启用列表都写入）
   app.post(
     "/admin/providers/:id/models",
-    { onRequest: [app.authenticate], preHandler: requireAdmin },
+    { onRequest: [app.authenticate], preHandler: assertOwnProvider },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = req.body as { model?: string };
@@ -438,7 +445,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   // 把候选模型启用为可用模型（不在线上列表里时一并补进缓存）
   app.post(
     "/admin/providers/:id/models/enable",
-    { onRequest: [app.authenticate], preHandler: requireAdmin },
+    { onRequest: [app.authenticate], preHandler: assertOwnProvider },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = req.body as { model?: string };
@@ -466,7 +473,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   // 取消启用：从可用列表移除，但保留在供应商候选列表里
   app.post(
     "/admin/providers/:id/models/disable",
-    { onRequest: [app.authenticate], preHandler: requireAdmin },
+    { onRequest: [app.authenticate], preHandler: assertOwnProvider },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = req.body as { model?: string };
@@ -485,7 +492,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   // 从供应商模型列表中彻底移除（可用列表同步移除）
   app.delete(
     "/admin/providers/:id/models",
-    { onRequest: [app.authenticate], preHandler: requireAdmin },
+    { onRequest: [app.authenticate], preHandler: assertOwnProvider },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const query = req.query as { model?: string };
@@ -513,16 +520,9 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       .all();
   });
 
-  // 管理员重置任意用户密码：不需要旧密码，用于忘记密码的自救场景
-  app.patch("/admin/users/:id/password", { onRequest: [app.authenticate], preHandler: requireAdmin }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { password?: string };
-    if (!body.password || body.password.length < 6) {
-      return reply.code(400).send({ error: "password must be at least 6 characters" });
-    }
-    if (!getUserById(id)) return reply.code(404).send({ error: "user not found" });
-    updatePassword(id, body.password);
-    return reply.send({ ok: true });
+  // 密码在企业知识库，本应用不再重置
+  app.patch("/admin/users/:id/password", { onRequest: [app.authenticate], preHandler: requireAdmin }, async (_req, reply) => {
+    return reply.code(410).send({ error: "密码由企业知识库管理，本应用不再修改密码" });
   });
 
   app.get("/admin/agents", { onRequest: [app.authenticate], preHandler: requireAdmin }, async () => {
@@ -654,20 +654,8 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     if (!body.name || !body.systemPrompt) {
       return reply.code(400).send({ error: "name and systemPrompt are required" });
     }
-    const providerId = body.providerId?.trim() ?? "";
-    const modelId = body.modelId?.trim() ?? "";
-    if (!!providerId !== !!modelId) {
-      return reply.code(400).send({ error: "providerId 与 modelId 需同时提供（或不提供）" });
-    }
-    if (providerId) {
-      const p = db.prepare("SELECT enabled_models FROM model_providers WHERE id = ?").get(providerId) as
-        | { enabled_models: string }
-        | undefined;
-      if (!p) return reply.code(400).send({ error: "unknown providerId" });
-      if (!parseModels(p.enabled_models).includes(modelId)) {
-        return reply.code(400).send({ error: "模型不在该供应商的可用列表中" });
-      }
-    }
+    const providerId = "";
+    const modelId = "";
     const tags = (body.tags ?? []).map((t) => String(t).trim()).filter(Boolean).slice(0, 8);
     db.prepare(
       "UPDATE agents SET name = ?, description = ?, system_prompt = ?, provider_id = ?, model_id = ?, tags = ?, high_risk = ?, tool_policy = ? WHERE id = ?"

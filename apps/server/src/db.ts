@@ -308,23 +308,54 @@ export function migrate(): void {
       PRIMARY KEY (task_id, tool_name)
     );
   `);
+
+  // V16：登录身份改为企业知识库用户。旧的自助注册账号及其任务、成果、定时巡检、协作缓存只清一次。
+  // 专家和技能保留，但专家不再记住供应商。全局供应商先留空归属，等超级管理员登录时领走。
+  for (const sql of [
+    "ALTER TABLE users ADD COLUMN kb_user_id TEXT",
+    "ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE users ADD COLUMN nick_name TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE users ADD COLUMN kb_access_token TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE model_providers ADD COLUMN user_id TEXT",
+  ]) {
+    try {
+      db.exec(sql);
+    } catch {
+      // duplicate column name
+    }
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_flags (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_kb_user_id ON users(kb_user_id) WHERE kb_user_id IS NOT NULL AND kb_user_id != '';
+  `);
+  const cutover = db.prepare("SELECT value FROM schema_flags WHERE key = 'kb_user_cutover'").get();
+  if (!cutover) {
+    db.exec(`
+      DELETE FROM task_session_grants;
+      DELETE FROM task_uploads;
+      DELETE FROM task_messages;
+      DELETE FROM deliverables;
+      DELETE FROM tasks;
+      DELETE FROM scheduled_tasks;
+      DELETE FROM wps_profile;
+      DELETE FROM users;
+      UPDATE agents SET provider_id = NULL, model_id = NULL;
+    `);
+    db.prepare("INSERT INTO schema_flags (key, value) VALUES ('kb_user_cutover', ?)").run(now());
+  }
 }
 
 // 内置默认专家「通用助手」：专家非必选——派发任务时未指定专家则落到这里。
-// 模型默认取最早创建的可用供应商的可用模型；没有可用供应商时留空，
-// 由「创建任务须显式选模型」的既有校验兜底提示。
+// 专家不保存供应商或默认模型，派发时由当前用户从自己的模型里选。
 export function ensureDefaultAgent(): void {
   const DEFAULT_ID = "builtin-general-assistant";
   const exists = db.prepare("SELECT id FROM agents WHERE id = ?").get(DEFAULT_ID);
   if (exists) return;
-  const provider = db
-    .prepare(
-      "SELECT p.id AS provider_id, p.enabled_models FROM model_providers p WHERE p.enabled = 1 ORDER BY p.created_at DESC LIMIT 1"
-    )
-    .get() as { provider_id: string; enabled_models: string } | undefined;
-  const modelId = provider ? (parseFirstModel(provider.enabled_models) ?? "") : "";
   db.prepare(
-    "INSERT INTO agents (id, name, description, system_prompt, provider_id, model_id, tags, folder, high_risk, tool_policy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?)"
+    "INSERT INTO agents (id, name, description, system_prompt, provider_id, model_id, tags, folder, high_risk, tool_policy, created_at) VALUES (?, ?, ?, ?, NULL, NULL, ?, '', 0, ?, ?)"
   ).run(
     DEFAULT_ID,
     "通用助手",
@@ -334,23 +365,11 @@ export function ensureDefaultAgent(): void {
       "职责：在用户没有指定专家时承接任务，覆盖日常办公问答、文案撰写、资料整理、信息查询等通用场景。",
       "行为准则：直接解决问题，不推荐其他专家；任务超出能力或需要 WPS 365 数据时，按技能说明加载并使用对应技能。",
     ].join("\n"),
-    provider?.provider_id ?? null,
-    modelId || null,
     JSON.stringify(["内置"]),
     "{}",
     now()
   );
   console.log(`[agents] 已创建内置默认专家「通用助手」`);
-}
-
-function parseFirstModel(enabledModels: string): string | undefined {
-  try {
-    const arr: unknown = JSON.parse(enabledModels);
-    if (Array.isArray(arr) && typeof arr[0] === "string") return arr[0];
-  } catch {
-    // 非法 JSON 视为未配置
-  }
-  return undefined;
 }
 
 export const uuid = () => randomUUID();

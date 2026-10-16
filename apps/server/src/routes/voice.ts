@@ -6,6 +6,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { currentUser } from "../auth.js";
 import { config } from "../config.js";
 import { db } from "../db.js";
 
@@ -115,13 +116,14 @@ export async function callTranscription(
 }
 
 /** 查询当前数据库中显式绑定了 ASR 模型的供应商候选列表 */
-export function loadTranscribeCandidates(): TranscribeCandidate[] {
+export function loadTranscribeCandidates(userId?: string): TranscribeCandidate[] {
+  if (!userId) return [];
   try {
     const rows = db
       .prepare(
-        "SELECT id, name, base_url, api_key, enabled_models, models, asr_model FROM model_providers WHERE enabled = 1 ORDER BY created_at"
+        "SELECT id, name, base_url, api_key, enabled_models, models, asr_model FROM model_providers WHERE enabled = 1 AND user_id = ? ORDER BY created_at"
       )
-      .all() as unknown as TranscribeProviderRow[];
+      .all(userId) as unknown as TranscribeProviderRow[];
     return pickTranscribeCandidates(rows);
   } catch {
     return [];
@@ -394,9 +396,10 @@ export async function transcribeWithLocalModel(
 export async function transcribeAudioBuffer(
   audio: Buffer,
   filename = "speech.wav",
-  contentType = "audio/wav"
+  contentType = "audio/wav",
+  userId?: string
 ): Promise<{ text: string; provider: string; model: string }> {
-  const candidates = loadTranscribeCandidates();
+  const candidates = loadTranscribeCandidates(userId);
   const errors: string[] = [];
 
   for (const c of candidates) {
@@ -421,8 +424,8 @@ export async function transcribeAudioBuffer(
 
 export function registerVoiceRoutes(app: FastifyInstance): void {
   // 查询当前语音转写候选配置状态（含本地开源模型状态）
-  app.get("/voice/status", { onRequest: [app.authenticate] }, async () => {
-    const candidates = loadTranscribeCandidates().map((c) => ({
+  app.get("/voice/status", { onRequest: [app.authenticate] }, async (req) => {
+    const candidates = loadTranscribeCandidates(currentUser(req).id).map((c) => ({
       providerId: c.providerId,
       providerName: c.providerName,
       model: c.model,
@@ -462,7 +465,7 @@ export function registerVoiceRoutes(app: FastifyInstance): void {
     if (!audio.length) return reply.code(400).send({ error: "音频内容为空" });
 
     try {
-      const res = await transcribeAudioBuffer(audio, data.filename || "speech.wav", data.mimetype);
+      const res = await transcribeAudioBuffer(audio, data.filename || "speech.wav", data.mimetype, currentUser(req).id);
       return reply.send(res);
     } catch (err) {
       return reply.code(502).send({

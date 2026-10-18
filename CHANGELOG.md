@@ -2,6 +2,53 @@
 
 记录平台每次迭代的功能、修复与行为变化。领域术语见 [CONTEXT.md](CONTEXT.md)。
 
+## 2026-10-18（二十三）
+
+### 新增
+
+- **预览区内嵌浏览器与网页标注**：任务详情右侧预览区增加「浏览器」页签（Electron `<webview>`）。可打开任意 URL（默认 `http://127.0.0.1:5173/`），开启「标注」后点击页面元素、填写说明并发送到当前任务对话；附带页面截图附件与 CSS 路径 / XPath / 文本等定位信息。纯浏览器打开客户端时无内嵌能力。
+
+### 修复
+
+- **对话气泡显示上传附件**：用户消息 `meta.attachments` 写入文件名/大小/相对路径；`GET /tasks/:id/messages` 回传；气泡内展示附件条（此前附件只进 `context_note` 注入模型，对话里看不见）。
+- **拖入会话输入区**：拖放热区扩到整个 `composer-zone`（含输入框周围），拖入时高亮；placeholder 标明可拖入文件。首页派发区同步提示。
+- **项目文件夹可继续开新任务**：侧栏「项目」悬停显示「+」；跳转首页并预填该工作目录与最近使用的专家，派发后仍归入同一文件夹。
+- **未选手动目录不进「项目」**：`custom_workspace` 仅在用户显式选择工作目录时为 1。专家常驻目录仍可作执行工作区，但任务归「最近任务」；历史误标数据启动时迁移清回。
+- **项目操作（对齐 Codex / ZCode）**：侧栏项目 `⋯` 菜单支持查看文件夹内容、在资源管理器中打开、复制路径、移除项目。移除只取消侧栏归组（`POST /projects/detach`），不删磁盘文件与任务；查看内容进入项目文件浏览页。
+- **追问可切换模型**：任务详情输入栏增加模型选择器；`PATCH /tasks/:id/model` 更新任务供应商/模型并重建下一轮会话（进行中需先结束或打断）。
+- **网页标注不再白屏**：去掉 webview `allowpopups`（guest 弹窗会变成只剩菜单的空白窗）；截图改走主进程 `captureWebContents`；主窗口拦截跨域导航与 `window.open`。
+- **对话图片内联 + 点击放大**：用户消息气泡优先展示图片缩略图（非图片仍为文件条），点击打开灯箱；输入区附件条对图片显示缩略图。
+
+### 变更
+
+- **文档转 Markdown 不改原件名**：平台指令明确禁止 rename/move/overwrite 用户上传原件；`doc_to_md` / `ocr_to_md` 产物只落在隐藏目录 `.parsed/`。工具轨迹里的「文档转 Markdown xxx.pdf」是工具步骤标签，不是改名。Agent 自行复制到工作区根目录的副本（如 `audit2021.pdf`）会计入成果物，与上传原件分开。
+
+## 2026-10-18（二十二）
+
+### 新增
+
+- **会话权限预选**：首页与任务详情输入栏可在发送前选择四档权限——计划模式 / 变更前确认 / 自主模式 / 完全访问。任务表记录 `access_mode`；工具闸门执行时现查档位。计划模式对齐 Pi 官方 plan-mode（只读探索、terminal 白名单、先出 Plan 清单再确认执行）；确认后升为自主模式。专家 `deny` 仍优先；偏好记在 `localStorage`（`ao.accessMode`）。
+
+## 2026-10-17（二十一）
+
+### 新增
+
+- **客户端一体包**：`pnpm pack:win` / `pack:mac` / `pack:linux` 用 electron-builder 打可分发安装包。内嵌服务端 + 捆绑当前平台 Node 运行时；`DATA_DIR` 与 `JWT_SECRET` 落在 `%AppData%/Agent Office`（macOS/Linux 为对应应用数据目录）；`pi-packages` / `skills-catalog` / `agent-packs` 随包分发。产物在 `apps/desktop/release/`（Windows：Setup + Portable）。须在目标 OS 上构建。
+
+## 2026-10-17（二十）
+
+### 新增
+
+- **网页检索（`pi-web-access`）**：启动时声明并安装 `npm:pi-web-access@0.42.0`，任务会话注入 `web_search`、`fetch_content`、`get_search_content`、`source_check`。配置写在平台 `{agentDir}/web-search.json`（`PI_CODING_AGENT_DIR`），不读操作者本机 `~/.pi`；首次自动写入 `toolActivation: "eager"`（不覆盖已有配置），首轮即可用检索工具。无密钥时走包内默认检索链；`fetch_url` 仍作为简单 HTML 回退。专家工具策略可单独设 ask/deny。离线或该包装失败不影响 `doc_to_md`。
+
+## 2026-10-16（十九）
+
+### 新增
+
+- **GitHub / 技能包安装**：GitHub 仓库地址优先下载 zipball，git 克隆失败时回退 zip，并展示 git 的真实错误（不再只剩 `Command failed: git clone`）。支持本机/链接 `.zip` 技能包，以及技能页「导入技能包」。
+- **同步用户 ~/.agents/skills**：「全部同步」会先扫入用户本机 `.agents/skills`（`npx skills` 安装位置），与其它来源重名的跳过。安装框也可填 `agents:`。
+- **对话创建技能**：技能页「对话创建技能」跳到首页，预填 `/skill-creator`。内置 `skill-creator` 技能按主流访谈流程问清用途后，用 `write_skill` 写入平台技能库（需审批，不覆盖任务工作区里的草稿）。
+
 ## 2026-10-16（十八）
 
 ### 变更

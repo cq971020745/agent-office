@@ -19,10 +19,13 @@
     "@fastify/multipart": "^9.4.0",
     "@fastify/static": "10.1.4",
     "@huggingface/transformers": "4.3.1",
+    "@napi-rs/canvas": "1.0.11",
     "@office/shared": "workspace:*",
     "better-sqlite3": "13.0.3",
     "fastify": "5.12.5",
-    "sherpa-onnx-node": "1.13.8"
+    "pdfjs-dist": "6.4.299",
+    "sherpa-onnx-node": "1.13.8",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",

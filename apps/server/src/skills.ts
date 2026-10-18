@@ -6,7 +6,8 @@ import { db, now } from "./db.js";
 import { paths } from "./config.js";
 
 /**
- * 平台技能：{agentDir}/skills/<name>/SKILL.md（pi 的全局技能发现目录，每任务会话自动发现）。
+ * 平台技能：{agentDir}/skills/<name>/SKILL.md，技能页安装的能力，未绑定专家时大家都能用。
+ * 专家包技能：{agentDir}/experts/<agentId>/skills/<name>/，只属于该专家，其他会话看不到。
  * pi 仅在会话启用内置 read/bash 工具时才把技能写进系统提示词；本平台会话只有自研工作区工具，
  * 因此由 runner 调 buildSkillsPrompt() 注入技能清单（渐进披露：只注入元数据），
  * 模型按需用 read_skill 工具加载正文与 scripts/references 等资源文件。
@@ -32,12 +33,47 @@ interface ParsedSkill extends SkillFrontmatter {
   body: string;
 }
 
+/**
+ * 读 frontmatter 标量字段。支持单行 `key: value`，以及 YAML 块标量
+ * `key: >` / `>-` / `|` / `|-`（多行正文在后续缩进行里）。
+ * 常见 Agent Skill 用 `description: >` 写长描述；只读冒号同行会得到裸的 `>`。
+ */
 function parseFrontmatterLine(header: string, key: string): string {
-  const line = header
-    .split(/\r?\n/)
-    .find((l) => new RegExp(`^${key}\\s*:`).test(l.trim()));
-  if (!line) return "";
-  return line.slice(line.indexOf(":") + 1).trim().replace(/^["']|["']$/g, "");
+  const lines = header.split(/\r?\n/);
+  const keyRe = new RegExp(`^${key}\\s*:`);
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!keyRe.test(trimmed)) continue;
+    const after = trimmed.slice(trimmed.indexOf(":") + 1).trim();
+    // YAML 块标量指示符：> / |，可带 chomping 标记 - 或 +
+    if (/^[>|][-+]?$/.test(after)) {
+      const block: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const raw = lines[j];
+        if (/^\s*$/.test(raw)) {
+          // 空行：后面还有缩进内容则保留为段分隔，否则结束块
+          if (j + 1 < lines.length && /^\s+\S/.test(lines[j + 1])) {
+            block.push("");
+            continue;
+          }
+          break;
+        }
+        if (!/^\s/.test(raw)) break;
+        block.push(raw.trim());
+      }
+      if (after.startsWith("|")) return block.join("\n").trim();
+      // folded（>）：同行段用空格拼接，空行保留为段分隔
+      return block
+        .join("\n")
+        .split(/\n{2,}/)
+        .map((para) => para.replace(/\n/g, " ").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+    }
+    return after.replace(/^["']|["']$/g, "");
+  }
+  return "";
 }
 
 /** 解析 SKILL.md 的 frontmatter 与正文；无 frontmatter 时整篇视为正文（全字段为默认值）。 */
@@ -110,24 +146,32 @@ function toMeta(dirName: string, parsed: ParsedSkill, stat: fs.Stats): SkillMeta
   };
 }
 
-function readSkillFile(name: string): { parsed: ParsedSkill; stat: fs.Stats } | undefined {
+function readSkillFileAt(root: string, name: string): { parsed: ParsedSkill; stat: fs.Stats } | undefined {
   if (!isValidSkillName(name)) return undefined;
-  const file = path.join(SKILLS_DIR, name, "SKILL.md");
+  const file = path.join(root, name, "SKILL.md");
   if (!fs.existsSync(file)) return undefined;
   const stat = fs.statSync(file);
   return { parsed: parseSkillMd(fs.readFileSync(file, "utf8")), stat };
 }
 
-export function listSkills(): SkillMeta[] {
-  if (!fs.existsSync(SKILLS_DIR)) return [];
+function readSkillFile(name: string): { parsed: ParsedSkill; stat: fs.Stats } | undefined {
+  return readSkillFileAt(SKILLS_DIR, name);
+}
+
+function listSkillsIn(root: string): SkillMeta[] {
+  if (!fs.existsSync(root)) return [];
   const out: SkillMeta[] = [];
-  for (const entry of fs.readdirSync(SKILLS_DIR, { withFileTypes: true })) {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const meta = readSkillFile(entry.name);
+    const meta = readSkillFileAt(root, entry.name);
     if (!meta) continue;
     out.push(toMeta(entry.name, meta.parsed, meta.stat));
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function listSkills(): SkillMeta[] {
+  return listSkillsIn(SKILLS_DIR);
 }
 
 export function getSkill(name: string): (SkillMeta & { content: string }) | undefined {
@@ -158,7 +202,17 @@ export function writeSkillFile(
   content: string,
   extras: SkillWriteExtras = {}
 ): void {
-  const dir = path.join(SKILLS_DIR, name);
+  writeSkillFileIn(SKILLS_DIR, name, description, content, extras);
+}
+
+function writeSkillFileIn(
+  root: string,
+  name: string,
+  description: string,
+  content: string,
+  extras: SkillWriteExtras = {}
+): void {
+  const dir = path.join(root, name);
   fs.mkdirSync(dir, { recursive: true });
   const lines = [`name: ${name}`, `description: ${description.replace(/\r?\n/g, " ")}`];
   if (extras.argumentHint) lines.push(`argument-hint: ${extras.argumentHint.replace(/\r?\n/g, " ")}`);
@@ -199,9 +253,118 @@ export function deleteSkill(name: string): boolean {
   return true;
 }
 
-// ---------- 专家↔技能绑定（agent_skills 表；无行 = 使用全部技能） ----------
+// ---------- 专家私有技能（专家包安装到这里，不进平台技能库） ----------
 
-/** 专家显式绑定的技能名；空数组表示未绑定任何技能，undefined 表示未显式配置（用全部）。 */
+function isSafeAgentId(agentId: string): boolean {
+  return /^[\w-]{1,80}$/.test(agentId);
+}
+
+/** 某位专家自己的技能根目录。其他专家的会话不会扫描这里。 */
+export function agentSkillsRoot(agentId: string): string {
+  if (!isSafeAgentId(agentId)) throw new Error("invalid agent id");
+  return path.join(paths.agentDir, "experts", agentId, "skills");
+}
+
+export function listOwnedSkills(agentId: string): SkillMeta[] {
+  if (!isSafeAgentId(agentId)) return [];
+  return listSkillsIn(agentSkillsRoot(agentId));
+}
+
+const COPY_SKIP_DIRS = new Set([".git", "__pycache__", "node_modules"]);
+
+function copySkillTree(from: string, to: string): void {
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (COPY_SKIP_DIRS.has(entry.name) || entry.name.endsWith(".pyc")) continue;
+    const src = path.join(from, entry.name);
+    const dst = path.join(to, entry.name);
+    if (entry.isDirectory()) {
+      fs.mkdirSync(dst, { recursive: true });
+      copySkillTree(src, dst);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(src, dst);
+    }
+  }
+}
+
+/** 把一个技能目录或一段正文装进专家私有目录。成功返回 true。 */
+export function installOwnedSkill(
+  agentId: string,
+  name: string,
+  source: { dir?: string; description?: string; content?: string }
+): boolean {
+  if (!isSafeAgentId(agentId) || !isValidSkillName(name)) return false;
+  const dest = path.join(agentSkillsRoot(agentId), name);
+  fs.rmSync(dest, { recursive: true, force: true });
+  if (source.dir && fs.existsSync(path.join(source.dir, "SKILL.md"))) {
+    fs.mkdirSync(dest, { recursive: true });
+    copySkillTree(source.dir, dest);
+    return true;
+  }
+  if (source.content?.trim()) {
+    writeSkillFileIn(agentSkillsRoot(agentId), name, source.description ?? "", source.content);
+    return true;
+  }
+  return false;
+}
+
+export function removeExpertSkills(agentId: string): void {
+  if (!isSafeAgentId(agentId)) return;
+  fs.rmSync(path.join(paths.agentDir, "experts", agentId), { recursive: true, force: true });
+}
+
+/** 私有目录优先，其次平台技能库。不做会话权限判断，导出时用。 */
+export function locateSkillDir(agentId: string | undefined, name: string): string | undefined {
+  if (!isValidSkillName(name)) return undefined;
+  if (agentId && isSafeAgentId(agentId)) {
+    const priv = path.join(agentSkillsRoot(agentId), name);
+    if (fs.existsSync(path.join(priv, "SKILL.md"))) return priv;
+  }
+  const shared = path.join(SKILLS_DIR, name);
+  return fs.existsSync(path.join(shared, "SKILL.md")) ? shared : undefined;
+}
+
+/** 当前专家能用的技能目录。不在有效清单里时返回 undefined。 */
+export function skillDirectory(agentId: string | undefined, name: string): string | undefined {
+  if (agentId && !listEffectiveSkills(agentId).some((s) => s.name === name)) return undefined;
+  return locateSkillDir(agentId, name);
+}
+
+function skillAvailable(agentId: string, name: string): boolean {
+  if (!isValidSkillName(name)) return false;
+  if (skillExists(name)) return true;
+  return isSafeAgentId(agentId) && fs.existsSync(path.join(agentSkillsRoot(agentId), name, "SKILL.md"));
+}
+
+/**
+ * 这位专家本次会话能看到的技能。
+ * 未显式绑定时 = 全部平台技能 + 这位专家自己的技能。
+ * 显式绑定时 = 绑定名字里、平台库或这位专家目录里实际存在的技能。
+ * 其他专家的私有技能永远不在这里。
+ */
+export function listEffectiveSkills(agentId?: string): SkillMeta[] {
+  const shared = listSkills();
+  if (!agentId) return shared;
+  const owned = listOwnedSkills(agentId);
+  const binding = getAgentSkillBinding(agentId);
+  const byName = new Map<string, SkillMeta>();
+  for (const skill of shared) byName.set(skill.name, skill);
+  for (const skill of owned) byName.set(skill.name, skill);
+  if (binding === undefined) return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return binding.flatMap((name) => {
+    const skill = byName.get(name);
+    return skill ? [skill] : [];
+  });
+}
+
+// ---------- 专家↔技能绑定（agent_skills 表；无行 = 使用全部平台技能） ----------
+
+/** 该专家的有效技能里是否包含这个名字。 */
+export function agentUsesSkill(agentId: string | undefined, name: string): boolean {
+  if (!agentId || !isValidSkillName(name)) return false;
+  return listEffectiveSkills(agentId).some((skill) => skill.name === name);
+}
+
+/** 专家显式绑定的技能名。无绑定行时返回 undefined，表示使用全部平台技能。 */
 export function getAgentSkillBinding(agentId: string): string[] | undefined {
   try {
     const rows = db.prepare("SELECT skill_name FROM agent_skills WHERE agent_id = ?").all(agentId) as {
@@ -220,8 +383,12 @@ export function setAgentSkillBinding(agentId: string, skills: string[]): void {
   const ins = db.prepare("INSERT OR IGNORE INTO agent_skills (agent_id, skill_name) VALUES (?, ?)");
   const tx = db.transaction(() => {
     del.run(agentId);
-    for (const name of new Set(skills)) {
-      if (isValidSkillName(name) && skillExists(name)) ins.run(agentId, name);
+    // 空数组 = 清空绑定 = 使用全部平台技能。非空时专家包自带技能始终留在绑定里。
+    if (!skills.length) return;
+    const names = new Set(skills);
+    for (const owned of listOwnedSkills(agentId)) names.add(owned.name);
+    for (const name of names) {
+      if (skillAvailable(agentId, name)) ins.run(agentId, name);
     }
   });
   tx();
@@ -241,11 +408,7 @@ const MAX_META_TOTAL = 4_000;
 
 /** 组装注入系统提示词的技能段：仅元数据（name/description/参数提示），正文由模型调 read_skill 获取。 */
 export function buildSkillsPrompt(agentId?: string): string {
-  let skills = listSkills();
-  if (agentId) {
-    const binding = getAgentSkillBinding(agentId);
-    if (binding !== undefined) skills = skills.filter((s) => binding.includes(s.name));
-  }
+  const skills = listEffectiveSkills(agentId);
   if (!skills.length) return "";
   const lines: string[] = [];
   let total = 0;
@@ -269,8 +432,9 @@ export function buildSkillsPrompt(agentId?: string): string {
 const MAX_SKILL_READ_CHARS = 50_000;
 
 /** 读取技能目录内的文件（正文或 scripts/references/assets 资源），路径严格限制在该技能目录内。 */
-export function readSkillResource(name: string, relPath = ""): string {
-  const skillRoot = path.join(SKILLS_DIR, name);
+export function readSkillResource(name: string, relPath = "", agentId?: string): string {
+  const skillRoot = skillDirectory(agentId, name);
+  if (!skillRoot) throw new Error(`skill not available: ${name}`);
   const target = path.resolve(skillRoot, relPath || "SKILL.md");
   const rootWithSep = skillRoot.endsWith(path.sep) ? skillRoot : skillRoot + path.sep;
   if (!target.startsWith(rootWithSep) && target !== skillRoot) {
@@ -284,8 +448,100 @@ export function readSkillResource(name: string, relPath = ""): string {
   return `${raw.slice(0, MAX_SKILL_READ_CHARS)}\n[truncated: file exceeds ${MAX_SKILL_READ_CHARS} chars]`;
 }
 
+const SKILL_RESOURCE_ROOTS = new Set(["scripts", "references", "assets", "evals"]);
+
+function assertSkillRelPath(rel: string): string {
+  const norm = rel.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+  if (!norm || norm === "SKILL.md") throw new Error("附属文件路径无效");
+  if (path.isAbsolute(norm) || norm.split("/").some((p) => p === ".." || p === "")) {
+    throw new Error(`path escapes the skill directory: ${rel}`);
+  }
+  const root = norm.split("/")[0] ?? "";
+  if (!SKILL_RESOURCE_ROOTS.has(root)) {
+    throw new Error("附属文件只能放在 scripts/、references/、assets/ 或 evals/ 下");
+  }
+  return norm;
+}
+
+/**
+ * write_skill：把对话写好的技能落到平台技能库（不是任务工作区）。
+ * 默认不覆盖同名技能；覆盖需 overwrite=true，并走默认询问审批。
+ */
+export function writeSkillTool(): ToolDefinition {
+  return {
+    name: "write_skill",
+    label: "写入技能库",
+    description:
+      "Publish a platform skill into the shared skill library (SKILL.md plus optional scripts/references/assets). Use this when creating or updating a skill with the user — do not only write SKILL.md into the task workspace. Defaults to refusing an existing name unless overwrite=true.",
+    parameters: Type.Object({
+      name: Type.String({ description: "Skill directory name (Chinese/letters/digits/hyphen/underscore, max 64)" }),
+      description: Type.String({
+        description: "Third-person description: what it does AND when to use it (trigger phrases)",
+      }),
+      content: Type.String({ description: "SKILL.md body in Markdown, without YAML frontmatter" }),
+      argumentHint: Type.Optional(Type.String({ description: "Optional slash-command argument hint" })),
+      alias: Type.Optional(Type.String({ description: "Optional comma-separated aliases" })),
+      overwrite: Type.Optional(Type.Boolean({ description: "Overwrite an existing skill of the same name" })),
+      files: Type.Optional(
+        Type.Array(
+          Type.Object({
+            path: Type.String({ description: "Relative path under scripts/, references/, assets/, or evals/" }),
+            content: Type.String({ description: "UTF-8 file content" }),
+          })
+        )
+      ),
+    }),
+    execute: async (_id, params: {
+      name?: string;
+      description?: string;
+      content?: string;
+      argumentHint?: string;
+      alias?: string;
+      overwrite?: boolean;
+      files?: Array<{ path?: string; content?: string }>;
+    }) => {
+      const name = String(params.name ?? "").trim();
+      const description = String(params.description ?? "").trim();
+      const content = String(params.content ?? "");
+      if (!isValidSkillName(name)) throw new Error("技能名只能包含中文、字母、数字、中划线或下划线");
+      if (!description) throw new Error("description 必填：说明技能做什么、何时触发");
+      if (!content.trim()) throw new Error("content 必填：技能正文");
+      const existed = skillExists(name);
+      if (existed && params.overwrite !== true) {
+        throw new Error(`技能「${name}」已存在，如需覆盖请设置 overwrite=true 并先征得用户同意`);
+      }
+      const files = Array.isArray(params.files) ? params.files : [];
+      const extras = files.map((file) => ({
+        rel: assertSkillRelPath(String(file.path ?? "")),
+        content: String(file.content ?? ""),
+      }));
+      if (existed) deleteSkill(name);
+      writeSkillFile(name, description, content, {
+        argumentHint: params.argumentHint?.trim() || undefined,
+        alias: params.alias?.trim() || undefined,
+      });
+      for (const file of extras) {
+        const dest = path.join(SKILLS_DIR, name, file.rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, file.content, "utf8");
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: existed
+              ? `updated skill ${name} (${files.length} extra files)`
+              : `created skill ${name} (${files.length} extra files)`,
+          },
+        ],
+        details: undefined,
+      };
+    },
+  };
+}
+
 /** read_skill 工具：读取技能正文（SKILL.md）或其目录下的资源文件（references/scripts 等，相对路径）。 */
-export function readSkillTool(): ToolDefinition {
+export function readSkillTool(agentId?: string): ToolDefinition {
   return {
     name: "read_skill",
     label: "读取技能",
@@ -304,7 +560,7 @@ export function readSkillTool(): ToolDefinition {
         throw new Error("invalid skill name");
       }
       recordSkillUsage(skillName);
-      const text = readSkillResource(skillName, (relPath ?? "").trim());
+      const text = readSkillResource(skillName, (relPath ?? "").trim(), agentId);
       return { content: [{ type: "text", text }], details: undefined };
     },
   };
@@ -361,18 +617,19 @@ export function expandSkillArguments(body: string, args: string): string {
  * 展开用户输入中的技能斜杠调用（如「/周报生成 销售条线」）。
  * 命中规则：首个 /词 精确等于技能名 > alias > 唯一前缀。未命中返回原输入。
  */
-export function expandSkillSlash(input: string): string {
+export function expandSkillSlash(input: string, agentId?: string): string {
   const m = /^\/([\w\u4e00-\u9fa5-]{1,64})(?:\s+([\s\S]*))?$/.exec(input.trim());
   if (!m) return input;
   const token = m[1];
   const args = (m[2] ?? "").trim();
-  const skills = listSkills();
+  const skills = listEffectiveSkills(agentId);
   const exact = skills.find((s) => s.name === token);
   const byAlias = skills.find((s) => s.alias.split(/[,\s]+/).filter(Boolean).includes(token));
   const prefixed = skills.filter((s) => s.name.startsWith(token));
   const match = exact ?? byAlias ?? (prefixed.length === 1 ? prefixed[0] : undefined);
   if (!match) return input;
-  const file = path.join(SKILLS_DIR, match.name, "SKILL.md");
+  const root = skillDirectory(agentId, match.name);
+  const file = root ? path.join(root, "SKILL.md") : "";
   if (!fs.existsSync(file)) return input;
   recordSkillUsage(match.name);
   const body = parseSkillMd(fs.readFileSync(file, "utf8")).body;

@@ -10,9 +10,11 @@ import { execFileSync } from "node:child_process";
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "office-skill-install-"));
 process.env.DATA_DIR = dataDir;
 
-const { installSkillFromSource, syncSkill, getSourceInfo, listBuiltinSkills, removeSkillSource } = await import("./skill-install.js");
-const { listSkills, getSkill, skillExists, deleteSkill } = await import("./skills.js");
-const { listBuiltinPacks, normalizeAgentPackage, readBuiltinPack, buildAgentPackage, installPackageSkills } = await import("./agent-packs.js");
+const { installSkillFromSource, installSkillFromZipBuffer, syncSkill, getSourceInfo, listBuiltinSkills, removeSkillSource, syncHomeAgentsSkills } = await import("./skill-install.js");
+const { zipFiles } = await import("./zip-pack.js");
+const { listSkills, getSkill, skillExists, deleteSkill, buildSkillsPrompt, setAgentSkillBinding, readSkillResource } = await import("./skills.js");
+const { listBuiltinPacks, normalizeAgentPackage, readBuiltinPack, buildAgentPackage, installPackageSkills, installExpertSkills } = await import("./agent-packs.js");
+const { db, uuid, now } = await import("./db.js");
 const { migrate } = await import("./db.js");
 migrate();
 
@@ -151,6 +153,85 @@ describe("skill-install：技能安装与同步", () => {
     removeSkillSource("清理技能");
     assert.equal(getSourceInfo("清理技能"), undefined);
   });
+
+  it("本机 zip 技能包安装：根下 SKILL.md 或子目录均可", async () => {
+    const zipPath = path.join(tmp, "pack-skill.zip");
+    fs.writeFileSync(
+      zipPath,
+      zipFiles([
+        {
+          name: "zip技能/SKILL.md",
+          data: Buffer.from("---\nname: zip技能\ndescription: 来自压缩包\n---\n\n压缩包正文\n", "utf8"),
+        },
+        { name: "zip技能/references/note.md", data: Buffer.from("附注\n", "utf8") },
+      ]),
+    );
+    const out = await installSkillFromSource(zipPath);
+    assert.deepEqual(out.names, ["zip技能"]);
+    assert.equal(out.kind, "zip");
+    assert.match(getSkill("zip技能")!.content, /压缩包正文/);
+    assert.ok(fs.existsSync(path.join(process.env.DATA_DIR!, "agent", "skills", "zip技能", "references", "note.md")));
+  });
+
+  it("上传 zip 字节安装；含 pack.json 的专家包被拒绝", async () => {
+    const buf = zipFiles([
+      {
+        name: "上传技能/SKILL.md",
+        data: Buffer.from("---\nname: 上传技能\ndescription: 上传\n---\n\n上传正文\n", "utf8"),
+      },
+    ]);
+    const out = await installSkillFromZipBuffer(buf, { label: "demo.zip" });
+    assert.deepEqual(out.names, ["上传技能"]);
+    assert.equal(out.kind, "zip");
+    assert.equal(out.source, "zip:demo.zip");
+
+    const expert = zipFiles([
+      { name: "pack.json", data: Buffer.from('{"format":"office-agent-package","version":2,"name":"x"}', "utf8") },
+      { name: "skills/a/SKILL.md", data: Buffer.from("---\nname: a\ndescription: d\n---\n\nbody\n", "utf8") },
+    ]);
+    await assert.rejects(() => installSkillFromZipBuffer(expert, { label: "expert.zip" }), /专家包/);
+  });
+
+  it("GitHub 仓库地址：zipball 成功时不必走 git clone", async () => {
+    const zipBuf = zipFiles([
+      {
+        name: "demo-main/gh技能/SKILL.md",
+        data: Buffer.from("---\nname: gh技能\ndescription: 来自 GitHub zip\n---\n\nzipball 正文\n", "utf8"),
+      },
+    ]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("codeload.github.com") && url.includes("demo-skill")) {
+        return new Response(zipBuf, { status: 200, headers: { "content-type": "application/zip" } });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    try {
+      const out = await installSkillFromSource("https://github.com/acme/demo-skill");
+      assert.deepEqual(out.names, ["gh技能"]);
+      assert.equal(out.kind, "git");
+      assert.match(getSkill("gh技能")!.content, /zipball 正文/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("同步 ~/.agents/skills：新技能装入，其它来源重名跳过", async () => {
+    const other = makeSkillDir(path.join(tmp, "other-home-src"), "外来技能", "外来正文");
+    await installSkillFromSource(other);
+    const home = path.join(tmp, "fake-agents-skills");
+    makeSkillDir(home, "home技能甲", "甲内容");
+    makeSkillDir(home, "外来技能", "不应覆盖外来");
+    process.env.AGENTS_SKILLS_DIR = home;
+    const out = syncHomeAgentsSkills();
+    assert.equal(out.missing, false);
+    assert.ok(out.added.includes("home技能甲") || out.updated.includes("home技能甲"));
+    assert.ok(skillExists("home技能甲"));
+    assert.equal(getSourceInfo("home技能甲")?.kind, "local");
+    assert.ok(out.skipped.includes("外来技能"));
+    assert.match(getSkill("外来技能")!.content, /外来正文/);
+  });
 });
 
 describe("agent-packs：专家包", () => {
@@ -217,6 +298,35 @@ describe("agent-packs：专家包", () => {
     const res = installPackageSkills(restored);
     assert.equal(res.installed[0]!.finalName, "往返技能");
     assert.equal(getSkill("往返技能")!.content, "往返内容");
+  });
+
+  it("目录专家包的技能只属于该专家，不进入平台技能库", () => {
+    process.env.AGENT_PACKS_DIR = path.join(repoRoot, "agent-packs");
+    process.env.SKILLS_CATALOG_DIR = path.join(tmp, "empty-catalog");
+    const pkg = readBuiltinPack("紫金个人知识库助手");
+    assert.ok(pkg);
+    assert.equal(pkg!.version, 2);
+    const source = pkg!.skills["enterprise-knowledge"]?.sourceDir ?? "";
+    assert.ok(source.includes(`${path.sep}紫金个人知识库助手${path.sep}skills${path.sep}`));
+    assert.ok(fs.existsSync(path.join(source, "references", "kb-qa.md")));
+    assert.equal(fs.existsSync(path.join(repoRoot, "skills-catalog", "enterprise-knowledge")), false);
+    const agentId = uuid();
+    const folder = path.join(dataDir, "agents", agentId);
+    fs.mkdirSync(folder, { recursive: true });
+    db.prepare(
+      "INSERT INTO agents (id, name, description, system_prompt, tags, folder, high_risk, tool_policy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(agentId, "隔离专家", "", "提示", "[]", folder, 0, "{}", now());
+    const installed = installExpertSkills(agentId, pkg!);
+    assert.deepEqual(
+      installed.installed.map((item) => item.finalName).sort(),
+      ["enterprise-knowledge", "pitfalls-and-experience", "wps365-env", "wps365-skill"],
+    );
+    setAgentSkillBinding(agentId, installed.installed.map((item) => item.finalName));
+    assert.equal(skillExists("enterprise-knowledge"), false);
+    assert.match(buildSkillsPrompt(agentId), /enterprise-knowledge/);
+    assert.doesNotMatch(buildSkillsPrompt("other-agent"), /enterprise-knowledge/);
+    assert.match(readSkillResource("enterprise-knowledge", "references/kb-qa.md", agentId), /./);
+    assert.throws(() => readSkillResource("enterprise-knowledge", "references/kb-qa.md", "other-agent"), /not available/);
   });
 });
 

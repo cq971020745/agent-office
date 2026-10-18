@@ -16,11 +16,13 @@ import { paths } from "./config.js";
 /** 随平台分发的内置插件包：id 用于日志，dirName 同时是仓库目录名与安装目录名。 */
 const BUILTIN_PACKAGES: ReadonlyArray<{ id: string; dirName: string }> = [
   { id: "office-suite", dirName: "office-suite" },
+  { id: "document-ocr", dirName: "document-ocr" },
 ];
 
 /**
- * 外部 Pi 包。pi-quiver 只启用 doc_to_md，避免把它的 fetch、Slack、会话装饰一并加载。
- * 版本钉死：该版本兼容当前 Node 22，并覆盖 PDF / DOCX / 旧版 DOC / PPTX / XLSX。
+ * 外部 Pi 包。版本钉死，兼容当前 Node 22。
+ * pi-quiver 只启用 doc_to_md，避免把它的 fetch、Slack、会话装饰一并加载。
+ * pi-web-access 提供 web_search / fetch_content / get_search_content / source_check。
  */
 const EXTERNAL_PACKAGES: readonly PiPackageDeclaration[] = [
   {
@@ -30,6 +32,7 @@ const EXTERNAL_PACKAGES: readonly PiPackageDeclaration[] = [
     prompts: [],
     themes: [],
   },
+  { source: "npm:pi-web-access@0.42.0" },
 ];
 
 export interface PiPackageDeclaration {
@@ -170,16 +173,45 @@ function offlineMode(): boolean {
   return value === "1" || value === "true" || value === "yes";
 }
 
+export interface ExternalInstallResult {
+  ready: string[];
+  failed: Array<{ source: string; error: string }>;
+}
+
+/**
+ * 平台默认让网页工具首轮即可用。不覆盖用户已有的 web-search.json。
+ * eager：跳过 web_enable，避免部分模型从不主动开启检索工具。
+ */
+export function ensureWebSearchConfig(): void {
+  const configPath = path.join(paths.agentDir, "web-search.json");
+  if (fs.existsSync(configPath)) return;
+  fs.mkdirSync(paths.agentDir, { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify({ toolActivation: "eager" }, null, 2)}\n`, "utf8");
+}
+
 /**
  * 把已声明、尚未落地的 npm Pi 包装进 agentDir。声明本身由 installPiPackages 写入。
- * 离线或网络失败时只记日志，任务仍可运行，只是 doc_to_md 不可用。
+ * 离线或单个包失败时只记日志，其余包仍安装；任务可运行，缺的是对应工具。
  */
-export async function ensureExternalPiPackages(cwd: string = process.cwd()): Promise<void> {
-  if (offlineMode()) return;
+export async function ensureExternalPiPackages(cwd: string = process.cwd()): Promise<ExternalInstallResult> {
+  const ready: string[] = [];
+  const failed: Array<{ source: string; error: string }> = [];
+  ensureWebSearchConfig();
+  if (offlineMode()) return { ready, failed };
   const settings = SettingsManager.create(cwd, paths.agentDir);
   const manager = new DefaultPackageManager({ cwd, agentDir: paths.agentDir, settingsManager: settings });
   for (const spec of EXTERNAL_PACKAGES) {
-    if (manager.getInstalledPath(spec.source, "user")) continue;
-    await manager.install(spec.source);
+    try {
+      if (!manager.getInstalledPath(spec.source, "user")) {
+        await manager.install(spec.source);
+      }
+      ready.push(spec.source);
+    } catch (err) {
+      failed.push({
+        source: spec.source,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
+  return { ready, failed };
 }

@@ -8,4 +8,7 @@ data/
 __pycache__/
 *.pyc
 .ui-shots/
+.playwright-cli/
+**/.playwright-cli/
 *.tsbuildinfo
+apps/desktop/release/

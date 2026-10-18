@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Role } from "@office/shared";
 import { db, now, uuid } from "./db.js";
 import type { KbSession } from "./kb-auth.js";
+import { ensureTextInProvider } from "./textin-provider.js";
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -71,6 +72,7 @@ export function upsertKbUser(session: KbSession): { id: string; username: string
       "UPDATE users SET username = ?, role = ?, phone = ?, nick_name = ?, kb_access_token = ? WHERE id = ?"
     ).run(session.userName, role, session.phone, session.nickName, session.accessToken, existing.id);
     if (role === "admin") claimOrphanProviders(existing.id);
+    ensureTextInProvider(existing.id);
     return { id: existing.id, username: session.userName, role };
   }
   const id = uuid();
@@ -88,13 +90,22 @@ export function upsertKbUser(session: KbSession): { id: string; username: string
     session.nickName,
     session.accessToken
   );
-  if (role === "admin") claimOrphanProviders(id);
+  if (role === "admin") {
+    claimOrphanProviders(id);
+    claimOrphanConnectors(id);
+  }
+  ensureTextInProvider(id);
   return { id, username: session.userName, role };
 }
 
 /** 切换前留下的全局供应商，整份交给当前这位超级管理员。 */
 export function claimOrphanProviders(userId: string): void {
   db.prepare("UPDATE model_providers SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(userId);
+}
+
+/** 切换前留下的全局连接器，整份交给当前这位超级管理员。 */
+export function claimOrphanConnectors(userId: string): void {
+  db.prepare("UPDATE mcp_servers SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(userId);
 }
 
 export function getUserPhone(id: string): string {
@@ -107,6 +118,24 @@ export function getKbAccessToken(id: string): string {
     | { kb_access_token?: string | null }
     | undefined;
   return row?.kb_access_token ?? "";
+}
+
+export function listKbAccessTokens(): { id: string; token: string }[] {
+  return db
+    .prepare("SELECT id, kb_access_token AS token FROM users WHERE kb_access_token != ''")
+    .all() as { id: string; token: string }[];
+}
+
+export function saveKbMcpApiKey(id: string, key: string): void {
+  db.prepare("UPDATE users SET kb_mcp_api_key = ? WHERE id = ?").run(key, id);
+}
+
+export function getKbMcpApiKey(id: string): string {
+  const row = db.prepare("SELECT kb_mcp_api_key FROM users WHERE id = ?").get(id) as
+    | { kb_mcp_api_key?: string | null }
+    | undefined;
+  const key = row?.kb_mcp_api_key ?? "";
+  return key.startsWith("kb_") ? key : "";
 }
 
 export function requireAdmin(req: FastifyRequest, reply: FastifyReply, done: () => void): void {

@@ -5,20 +5,35 @@ import { API_BASE, getToken } from "../api";
 import { formatSize, previewKind, timeAgo, type PreviewKind } from "../utils/format";
 import { renderMarkdown } from "../utils/markdown";
 import { toast, toastError } from "../composables/toast";
+import BrowserPreview from "./BrowserPreview.vue";
 
 const props = defineProps<{
   taskId: string;
   file: Deliverable | null;
   deliverables: Deliverable[];
-  collapsed: boolean;
   width?: string;
   workspacePath?: string;
+  /** 自选目录还没点开文件时，也允许展开一块空的预览区 */
+  allowEmpty?: boolean;
+  /** 启用内嵌浏览器 / 网页标注（任务详情默认开启） */
+  enableBrowser?: boolean;
+  /** 浏览器初始 URL */
+  browserUrl?: string;
 }>();
 const emit = defineEmits<{
   open: [file: Deliverable];
   close: [];
-  "update:collapsed": [value: boolean];
+  annotate: [payload: { prompt: string; screenshot?: File }];
 }>();
+
+/** files = 成果物预览；browser = 内嵌浏览器（须用户手动切换，不自动打开） */
+const panelMode = ref<"files" | "browser">("files");
+watch(
+  () => props.file?.id,
+  (id) => {
+    if (id) panelMode.value = "files";
+  }
+);
 
 const kind = ref<PreviewKind>("text");
 const content = ref("");
@@ -90,11 +105,20 @@ const csvTable = computed(() => {
 const TEXT_LIMIT = 512 * 1024;
 const hasElectronBridge = computed(() => typeof window !== "undefined" && !!window.agentOffice);
 
-// 没有成果物也没有打开文件时不占空间，会话独占宽度
-const visible = computed(() => !!props.file || props.deliverables.length > 0);
+const visible = computed(
+  () => !!props.file || props.deliverables.length > 0 || !!props.allowEmpty || !!props.enableBrowser
+);
+
+function isWorkspaceRef(f: Deliverable): boolean {
+  return f.id.startsWith("ws:");
+}
 
 function dlUrl(f: Deliverable): string {
-  return `${API_BASE}/tasks/${props.taskId}/deliverables/${f.id}/download?token=${encodeURIComponent(getToken())}`;
+  const token = encodeURIComponent(getToken());
+  if (isWorkspaceRef(f)) {
+    return `${API_BASE}/tasks/${props.taskId}/workspace/file?path=${encodeURIComponent(f.relPath)}&token=${token}`;
+  }
+  return `${API_BASE}/tasks/${props.taskId}/deliverables/${f.id}/download?token=${token}`;
 }
 
 function fileEmoji(name: string): string {
@@ -141,6 +165,22 @@ async function copyTextContent(): Promise<void> {
   }
 }
 
+/** 按扩展名给出图片 MIME。SVG 不能沿用下载接口的 octet-stream。 */
+function imageMime(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    svg: "image/svg+xml",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    bmp: "image/bmp",
+    ico: "image/x-icon",
+  };
+  return map[ext] ?? "application/octet-stream";
+}
+
 async function load(): Promise<void> {
   if (!props.file) return;
   kind.value = previewKind(props.file.filename);
@@ -154,7 +194,10 @@ async function load(): Promise<void> {
     blobUrl.value = "";
   }
   try {
-    const res = await fetch(`${API_BASE}/tasks/${props.taskId}/deliverables/${props.file.id}/download`, {
+    const fileUrl = isWorkspaceRef(props.file)
+      ? `${API_BASE}/tasks/${props.taskId}/workspace/file?path=${encodeURIComponent(props.file.relPath)}`
+      : `${API_BASE}/tasks/${props.taskId}/deliverables/${props.file.id}/download`;
+    const res = await fetch(fileUrl, {
       headers: { authorization: `Bearer ${getToken()}` },
     });
     if (!res.ok) throw new Error("加载文件失败");
@@ -162,12 +205,15 @@ async function load(): Promise<void> {
     if (kind.value === "html") {
       htmlDoc.value = await blob.text();
     } else if (kind.value === "image" || kind.value === "pdf" || kind.value === "audio") {
+      // 下载接口统一是 application/octet-stream。位图还能靠文件头识别，
+      // SVG 必须是 image/svg+xml，否则 <img> 只显示裂图。
       const mimeMap: Record<string, string> = {
         pdf: "application/pdf",
-        audio: blob.type || "audio/mpeg",
+        audio: blob.type && blob.type !== "application/octet-stream" ? blob.type : "audio/mpeg",
+        image: imageMime(props.file.filename),
       };
-      const typedBlob =
-        kind.value in mimeMap ? new Blob([blob], { type: mimeMap[kind.value] }) : blob;
+      const mime = mimeMap[kind.value];
+      const typedBlob = mime ? new Blob([blob], { type: mime }) : blob;
       blobUrl.value = URL.createObjectURL(typedBlob);
     } else if (kind.value === "text" && blob.size <= TEXT_LIMIT) {
       content.value = await blob.text();
@@ -199,24 +245,35 @@ const truncated = () => kind.value === "text" && props.file !== null && props.fi
     <aside
       v-if="visible"
       class="panel"
-      :class="{ collapsed }"
-      :style="collapsed ? undefined : width ? { width } : undefined"
+      :style="width ? { width } : undefined"
     >
-      <!-- 收起后保留窄侧栏，避免用户失去重新展开成果物的入口 -->
-      <button
-        v-if="collapsed"
-        type="button"
-        class="collapsed-trigger"
-        title="展开成果物面板"
-        aria-label="展开成果物面板"
-        :aria-expanded="false"
-        @click="emit('update:collapsed', false)"
-      >
-        <svg class="icon rail-chevron" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" /></svg>
-        <svg class="icon rail-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
-        <span class="rail-label">成果物</span>
-        <span class="rail-count">{{ deliverables.length }}</span>
-      </button>
+      <!-- 顶部模式切换：成果物 / 浏览器 -->
+      <div v-if="enableBrowser" class="mode-tabs">
+        <button
+          type="button"
+          class="mode-tab"
+          :class="{ on: panelMode === 'files' }"
+          @click="panelMode = 'files'"
+        >
+          成果物
+        </button>
+        <button
+          type="button"
+          class="mode-tab"
+          :class="{ on: panelMode === 'browser' }"
+          @click="panelMode = 'browser'"
+        >
+          浏览器
+        </button>
+      </div>
+
+      <!-- 内嵌浏览器 + 网页标注 -->
+      <BrowserPreview
+        v-if="enableBrowser && panelMode === 'browser'"
+        class="browser-fill"
+        :initial-url="browserUrl"
+        @annotate="emit('annotate', $event)"
+      />
 
       <!-- 文件预览态 -->
       <template v-else-if="file">
@@ -270,16 +327,6 @@ const truncated = () => kind.value === "text" && props.file !== null && props.fi
               </svg>
             </button>
             <a class="mini" :href="dlUrl(file)" :download="file.filename">下载</a>
-            <button
-              type="button"
-              class="icon-btn"
-              title="收起成果物面板"
-              aria-label="收起成果物面板"
-              :aria-expanded="true"
-              @click="emit('update:collapsed', true)"
-            >
-              <svg class="icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
-            </button>
             <button class="icon-btn" title="关闭" @click="emit('close')">
               <svg class="icon" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
             </button>
@@ -375,39 +422,31 @@ const truncated = () => kind.value === "text" && props.file !== null && props.fi
           </div>
           <div class="head-actions">
             <span class="lt-hint">点击文件在线预览</span>
-            <button
-              type="button"
-              class="icon-btn"
-              title="收起成果物面板"
-              aria-label="收起成果物面板"
-              :aria-expanded="true"
-              @click="emit('update:collapsed', true)"
-            >
-              <svg class="icon" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
-            </button>
           </div>
         </header>
         <div class="list">
-          <div v-for="f in deliverables" :key="f.id" class="row" @click="emit('open', f)">
-            <span class="file-icon">{{ fileEmoji(f.filename) }}</span>
-            <div class="f-main">
-              <div class="f-name mono" :title="f.relPath">{{ f.relPath }}</div>
-              <div class="f-sub">{{ formatSize(f.size) }} · {{ timeAgo(f.createdAt) }}</div>
+          <template v-if="deliverables.length">
+            <div v-for="f in deliverables" :key="f.id" class="row" @click="emit('open', f)">
+              <span class="file-icon">{{ fileEmoji(f.filename) }}</span>
+              <div class="f-main">
+                <div class="f-name mono" :title="f.relPath">{{ f.relPath }}</div>
+                <div class="f-sub">{{ formatSize(f.size) }} · {{ timeAgo(f.createdAt) }}</div>
+              </div>
+              <button
+                v-if="hasElectronBridge && workspacePath"
+                type="button"
+                class="icon-btn row-act"
+                title="在文件夹中定位"
+                @click.stop="revealInFolder(f)"
+              >
+                <svg class="icon" viewBox="0 0 24 24">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+              <a class="dl" :href="dlUrl(f)" :download="f.filename" @click.stop>下载</a>
             </div>
-            <button
-              v-if="hasElectronBridge && workspacePath"
-              type="button"
-              class="icon-btn row-act"
-              title="在文件夹中定位"
-              @click.stop="revealInFolder(f)"
-            >
-              <svg class="icon" viewBox="0 0 24 24">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-            <a class="dl" :href="dlUrl(f)" :download="f.filename" @click.stop>下载</a>
-          </div>
-          <div v-if="!deliverables.length" class="placeholder">Agent 写入工作区的文件会出现在这里</div>
+          </template>
+          <div v-else class="placeholder">{{ allowEmpty ? "从左侧选择文件预览" : "Agent 写入工作区的文件会出现在这里" }}</div>
         </div>
       </template>
     </aside>
@@ -424,61 +463,35 @@ const truncated = () => kind.value === "text" && props.file !== null && props.fi
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width 0.18s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-.panel.collapsed {
-  width: 44px !important;
-  min-width: 44px;
-}
-.collapsed-trigger {
-  width: 100%;
-  height: 100%;
-  padding: 11px 0;
-  border: none;
-  border-radius: 0;
-  background: var(--surface);
-  box-shadow: none;
-  color: var(--text-3);
+.mode-tabs {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
+  gap: 2px;
+  padding: 6px 10px 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
-.collapsed-trigger:hover {
-  border-color: transparent;
-  background: var(--surface-2);
+.mode-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 12px 8px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+}
+.mode-tab:hover {
   color: var(--text);
 }
-.collapsed-trigger:active {
-  transform: none;
-}
-.rail-chevron {
-  width: 16px;
-  height: 16px;
-}
-.rail-folder {
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-}
-.rail-label {
-  writing-mode: vertical-rl;
-  text-orientation: upright;
-  letter-spacing: 0.08em;
-  font-size: 12px;
-  font-weight: 600;
-}
-.rail-count {
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--accent-soft);
+.mode-tab.on {
   color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 22px;
-  text-align: center;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.browser-fill {
+  flex: 1;
+  min-height: 0;
 }
 header {
   display: flex;
@@ -617,7 +630,7 @@ header {
 }
 .image-wrap img {
   max-width: 100%;
-  max-height: 100%;
+  height: auto;
   object-fit: contain;
   box-shadow: var(--shadow-2);
 }

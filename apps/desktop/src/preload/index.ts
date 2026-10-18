@@ -10,4 +10,9 @@ contextBridge.exposeInMainWorld("agentOffice", {
     ipcRenderer.invoke("agent-office:show-item-in-folder", target),
   notify: (title: string, body?: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke("agent-office:notify", { title, body }),
+  /** 主进程截取指定 webContents（webview）为 PNG */
+  captureWebContents: (
+    webContentsId: number
+  ): Promise<{ ok: boolean; png?: Uint8Array; message?: string }> =>
+    ipcRenderer.invoke("agent-office:capture-webcontents", webContentsId),
 });

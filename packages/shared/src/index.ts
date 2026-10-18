@@ -24,6 +24,33 @@ export interface LoginRequest {
   uuid?: string;
 }
 
+/** 供应商对话协议，对应 pi-ai KnownApi 中可配置的三种网关格式 */
+export const PROVIDER_API_FORMATS = [
+  { id: "openai-completions", label: "Chat Completions (/chat/completions)", short: "Chat Completions" },
+  { id: "anthropic-messages", label: "Anthropic Messages (/v1/messages)", short: "Anthropic Messages" },
+  { id: "openai-responses", label: "Responses (/responses)", short: "Responses" },
+] as const;
+
+export type ProviderApiFormat = (typeof PROVIDER_API_FORMATS)[number]["id"];
+export const DEFAULT_PROVIDER_API_FORMAT: ProviderApiFormat = "openai-completions";
+
+export function isProviderApiFormat(value: string): value is ProviderApiFormat {
+  return PROVIDER_API_FORMATS.some((item) => item.id === value);
+}
+
+export function resolveProviderApiFormat(raw?: string | null): ProviderApiFormat {
+  const value = raw?.trim() ?? "";
+  return isProviderApiFormat(value) ? value : DEFAULT_PROVIDER_API_FORMAT;
+}
+
+export function providerApiFormatLabel(id: string): string {
+  return PROVIDER_API_FORMATS.find((item) => item.id === id)?.label ?? PROVIDER_API_FORMATS[0].label;
+}
+
+export function providerApiFormatShort(id: string): string {
+  return PROVIDER_API_FORMATS.find((item) => item.id === id)?.short ?? PROVIDER_API_FORMATS[0].short;
+}
+
 export interface ModelProvider {
   id: string;
   name: string;
@@ -33,12 +60,15 @@ export interface ModelProvider {
   /** 从供应商 /models 接口拉取并缓存的模型 ID 列表 */
   models: string[];
   modelsFetchedAt: string | null;
+  /** 对话协议；缺省 Chat Completions */
+  apiFormat: ProviderApiFormat;
 }
 
 export interface CreateModelProviderRequest {
   name: string;
   baseUrl: string;
   apiKey: string;
+  apiFormat?: ProviderApiFormat;
 }
 
 export interface AgentConfig {
@@ -103,6 +133,9 @@ export interface GeneratedAgent {
   note?: string;
 }
 
+/** 会话权限档位：发送前选定，驱动工具闸门与计划阶段。 */
+export type AccessMode = "plan" | "confirm" | "autonomous" | "full";
+
 export interface Task {
   id: string;
   userId: string;
@@ -115,12 +148,15 @@ export interface Task {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
-  /** 本任务实际使用的模型（派发时选择或专家默认） */
+  /** 本任务实际使用的模型（派发时选择；追问时可改） */
+  providerId: string;
   providerName: string;
   modelId: string;
   /** 任务工作目录（用户自选目录 / 专家常驻文件夹 / 平台隔离工作区） */
   workspacePath: string;
   customWorkspace: boolean;
+  /** 会话权限：计划 / 变更前确认 / 自主 / 完全访问 */
+  accessMode: AccessMode;
 }
 
 export interface CreateTaskRequest {
@@ -134,6 +170,8 @@ export interface CreateTaskRequest {
   workspaceDir?: string;
   /** 输入框 @ 选中的 WPS 对象（联系人/群聊/云文档等），随任务注入提示词 */
   mentions?: WpsMention[];
+  /** 会话权限档位；缺省时高风险专家为 plan，否则 autonomous */
+  accessMode?: AccessMode;
 }
 
 /** @ 弹层数据源类别（对齐 WPS Comate：聊天/联系人/云文档/知识库） */
@@ -227,8 +265,14 @@ export interface ModelOption {
 /** 语音识别（ASR）模型名称识别规则（前后端共用） */
 export const ASR_MODEL_RE = /whisper|asr|voice|audio|paraformer|sensevoice|funasr|speech/i;
 
-/** 非对话模型（向量/重排/语音等）识别规则：不该出现在「选模型」列表里 */
-export const NON_CHAT_MODEL_RE = /bge|reranker|embed|whisper|asr|paraformer|sensevoice|funasr|tts|vl/i;
+/** 非对话模型（向量/重排/语音/OCR 等）识别规则：不该出现在「选模型」列表里 */
+export const NON_CHAT_MODEL_RE = /bge|reranker|embed|whisper|asr|paraformer|sensevoice|funasr|tts|vl|textin|ocr/i;
+
+/** 扫描件 OCR 模型名称识别规则（前后端共用） */
+export const OCR_MODEL_RE = /textin|ocr|vl|gpt-4o|internvl|glm-4v/i;
+
+/** TextIn 文档解析在供应商里的固定模型 ID */
+export const TEXT_IN_MODEL_ID = "textin";
 
 /** 该模型 ID 是否可作为对话模型供任务使用 */
 export function isChatModel(modelId: string): boolean {
@@ -238,6 +282,16 @@ export function isChatModel(modelId: string): boolean {
 /** 该模型 ID 是否为语音识别（ASR）模型 */
 export function isAsrModel(modelId: string): boolean {
   return ASR_MODEL_RE.test(modelId);
+}
+
+/** 该模型 ID 是否为扫描件 OCR 模型（含 TextIn 与多模态视觉模型） */
+export function isOcrModel(modelId: string): boolean {
+  return OCR_MODEL_RE.test(modelId);
+}
+
+/** 该模型 ID 是否表示合合 TextIn 文档解析，而不是 OpenAI 兼容视觉模型 */
+export function isTextInOcrModel(modelId: string): boolean {
+  return modelId.trim().toLowerCase() === TEXT_IN_MODEL_ID;
 }
 
 /** 平台技能（{agentDir}/skills/<name>/SKILL.md）。正文按需经 read_skill 工具加载（渐进披露）。 */
@@ -271,9 +325,11 @@ export interface UpsertSkillRequest {
 }
 
 /** 技能安装来源登记（有登记的技能支持一键同步更新） */
+export type SkillSourceKind = "builtin" | "url" | "git" | "local" | "zip";
+
 export interface SkillSourceInfo {
   source: string;
-  kind: "builtin" | "url" | "git" | "local";
+  kind: SkillSourceKind;
   revision: string;
   syncedAt: string;
   /** 漂移检测结果（P2-4）：true = 源端比登记基线新；undefined = 未能判断 */
@@ -307,7 +363,7 @@ export interface SkillInstallResult {
   added: string[];
   updated: string[];
   removed: string[];
-  kind: "builtin" | "url" | "git" | "local";
+  kind: SkillSourceKind;
   source: string;
   revision: string;
 }
@@ -423,6 +479,16 @@ export interface TaskTurnStep {
 }
 
 /** 任务会话中的一条消息（用户派发/追问、agent 的最终回复及本轮思考/工具轨迹）。 */
+/** 用户消息附带的上传文件（展示用；原文仍在工作区，不拼进 content） */
+export interface TaskMessageAttachment {
+  filename: string;
+  size: number;
+  /** 相对工作区路径，便于预览/下载 */
+  relPath?: string;
+  /** 客户端乐观展示用的本地预览地址（blob:），不落库 */
+  previewUrl?: string;
+}
+
 export interface TaskMessage {
   id: string;
   taskId: string;
@@ -433,6 +499,8 @@ export interface TaskMessage {
   thinking?: string;
   /** 本轮模型执行的工具调用步骤（若有） */
   steps?: TaskTurnStep[];
+  /** 本条用户消息上传的附件（对话气泡展示） */
+  attachments?: TaskMessageAttachment[];
 }
 
 export interface SendTaskMessageRequest {

@@ -137,7 +137,8 @@ function toScheduledDto(r: ScheduledTaskRow): ScheduledTask {
 export function triggerScheduledTaskNow(scheduleId: string): { taskId: string } {
   const row = db
     .prepare(
-      `SELECT s.*, a.folder AS agent_folder, a.provider_id AS agent_provider_id, a.model_id AS agent_model_id
+      `SELECT s.*, a.folder AS agent_folder, a.provider_id AS agent_provider_id, a.model_id AS agent_model_id,
+              a.high_risk AS agent_high_risk
        FROM scheduled_tasks s
        JOIN agents a ON a.id = s.agent_id
        WHERE s.id = ?`
@@ -147,6 +148,7 @@ export function triggerScheduledTaskNow(scheduleId: string): { taskId: string } 
         agent_folder: string;
         agent_provider_id: string | null;
         agent_model_id: string | null;
+        agent_high_risk: number;
       })
     | undefined;
   if (!row) throw new Error("定时任务不存在");
@@ -175,11 +177,11 @@ export function triggerScheduledTaskNow(scheduleId: string): { taskId: string } 
   }
 
   const taskId = uuid();
+  // 定时任务无 UI 选目录：用专家常驻目录或平台隔离区；custom_workspace=0（不进侧栏「项目」）
   let workspace: string;
-  let customWorkspace = 0;
+  const customWorkspace = 0;
   if (row.agent_folder && fs.existsSync(row.agent_folder)) {
     workspace = row.agent_folder;
-    customWorkspace = 1;
   } else {
     workspace = path.join(paths.workspaces, taskId);
     fs.mkdirSync(workspace, { recursive: true });
@@ -190,10 +192,24 @@ export function triggerScheduledTaskNow(scheduleId: string): { taskId: string } 
   const runTimeIso = now();
   const nextRunIso = row.enabled ? computeNextRunAt(row.schedule_expr, new Date()) : null;
 
+  // 定时巡检无 UI 选档：高风险专家用计划模式，其余自主（与派发默认一致）
+  const accessMode = row.agent_high_risk ? "plan" : "autonomous";
   db.prepare(
-    `INSERT INTO tasks (id, user_id, agent_id, provider_id, model_id, title, prompt, context_note, status, workspace_path, custom_workspace, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, '', 'pending', ?, ?, ?)`
-  ).run(taskId, row.user_id, row.agent_id, providerId, modelId, taskTitle, row.prompt, workspace, customWorkspace, runTimeIso);
+    `INSERT INTO tasks (id, user_id, agent_id, provider_id, model_id, title, prompt, context_note, status, workspace_path, custom_workspace, access_mode, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, '', 'pending', ?, ?, ?, ?)`
+  ).run(
+    taskId,
+    row.user_id,
+    row.agent_id,
+    providerId,
+    modelId,
+    taskTitle,
+    row.prompt,
+    workspace,
+    customWorkspace,
+    accessMode,
+    runTimeIso
+  );
 
   db.prepare(
     "UPDATE scheduled_tasks SET last_run_at = ?, last_task_id = ?, next_run_at = ? WHERE id = ?"

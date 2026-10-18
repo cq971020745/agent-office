@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
-import type { Deliverable, Task, TaskEventEnvelope, TaskMessage, TaskTurnStep, ToolApprovalDecision } from "@office/shared";
+import { useRoute, useRouter } from "vue-router";
+import type {
+  AccessMode,
+  Deliverable,
+  ModelOption,
+  Task,
+  TaskEventEnvelope,
+  TaskMessage,
+  TaskTurnStep,
+  ToolApprovalDecision,
+} from "@office/shared";
 import {
   approveTask,
   approveToolCall,
@@ -9,13 +18,18 @@ import {
   listSessionGrants,
   revokeSessionGrant,
   downloadDeliverable,
+  API_BASE,
   getTask,
   getTaskMessages,
+  getToken,
   listDeliverables,
+  listModelOptions,
   openTaskEvents,
   renameTask,
   sendTaskMessage,
   sendTaskMessageWithFiles,
+  updateTaskAccessMode,
+  updateTaskModel,
 } from "../api";
 import { renderMarkdown } from "../utils/markdown";
 import { formatSize, previewKind, timeAgo } from "../utils/format";
@@ -23,6 +37,7 @@ import { toast, toastError } from "../composables/toast";
 import { MAX_FILES, useAttachments } from "../composables/attachments";
 import { useMentions } from "../composables/useMentions";
 import { useSlashSkills } from "../composables/useSlashSkills";
+import AccessModePicker from "../components/AccessModePicker.vue";
 import AgentAvatar from "../components/AgentAvatar.vue";
 import MentionChips from "../components/MentionChips.vue";
 import MentionPopup from "../components/MentionPopup.vue";
@@ -31,6 +46,7 @@ import SkillPopup from "../components/SkillPopup.vue";
 import VoiceDictate from "../components/VoiceDictate.vue";
 
 const route = useRoute();
+const router = useRouter();
 // 详情页组件在同路由下被复用（任务间跳转），taskId 必须跟随路由参数变化
 const taskId = ref(route.params.id as string);
 watch(
@@ -42,6 +58,8 @@ watch(
     lastSeq = 0;
     resetLive();
     previewFile.value = null;
+    previewCollapsed.value = true;
+    previewUserOpened.value = false;
     error.value = "";
     task.value = null;
     messages.value = [];
@@ -59,8 +77,197 @@ watch(
 );
 
 const task = ref<Task | null>(null);
+/** 会话权限：与任务同步；用户改档时立即 PATCH */
+const accessMode = ref<AccessMode>("autonomous");
+watch(
+  () => task.value?.accessMode,
+  (mode) => {
+    if (mode) accessMode.value = mode;
+  }
+);
+
+async function onAccessModeChange(mode: AccessMode): Promise<void> {
+  const prev = accessMode.value;
+  accessMode.value = mode;
+  if (!task.value || task.value.accessMode === mode) return;
+  try {
+    await updateTaskAccessMode(taskId.value, mode);
+    task.value = { ...task.value, accessMode: mode };
+  } catch (err) {
+    accessMode.value = prev;
+    toastError(err, "权限档位更新失败");
+  }
+}
+
+// ---------- 追问模型选择（非首次会话也可切换；下一轮生效） ----------
+const modelOptions = ref<ModelOption[]>([]);
+const selProviderId = ref("");
+const selModelId = ref("");
+const modelOpen = ref(false);
+const modelSearch = ref("");
+const modelTrigger = ref<HTMLElement | null>(null);
+const modelPopStyle = ref<Record<string, string>>({});
+const modelSaving = ref(false);
+
+watch(
+  () => [task.value?.providerId, task.value?.modelId] as const,
+  ([pid, mid]) => {
+    if (pid) selProviderId.value = pid;
+    if (mid) selModelId.value = mid;
+  }
+);
+
+const selectedModelLabel = computed(() => selModelId.value || "选择模型");
+const selectedProviderName = computed(
+  () => modelOptions.value.find((x) => x.providerId === selProviderId.value)?.providerName ?? task.value?.providerName ?? ""
+);
+const modelCount = computed(() => modelOptions.value.reduce((n, x) => n + x.models.length, 0));
+const filteredModelOptions = computed(() => {
+  const kw = modelSearch.value.trim().toLowerCase();
+  if (!kw) return modelOptions.value;
+  return modelOptions.value
+    .map((g) => ({
+      ...g,
+      models: g.models.filter((m) => m.toLowerCase().includes(kw) || g.providerName.toLowerCase().includes(kw)),
+    }))
+    .filter((g) => g.models.length > 0);
+});
+
+function toggleModelOpen(): void {
+  const busy = task.value?.status === "running" || task.value?.status === "pending";
+  if (busy || modelSaving.value) {
+    toast("info", "任务进行中，请等本轮结束或打断后再切换模型");
+    return;
+  }
+  if (!modelOpen.value && modelTrigger.value) {
+    const r = modelTrigger.value.getBoundingClientRect();
+    const left = Math.max(12, Math.min(r.right - 300, window.innerWidth - 312));
+    modelPopStyle.value = { left: `${left}px`, bottom: `${window.innerHeight - r.top + 8}px` };
+    modelSearch.value = "";
+  }
+  modelOpen.value = !modelOpen.value;
+}
+
+async function pickModel(providerId: string, modelId: string): Promise<void> {
+  if (!task.value) return;
+  if (task.value.providerId === providerId && task.value.modelId === modelId) {
+    modelOpen.value = false;
+    return;
+  }
+  const prev = { providerId: selProviderId.value, modelId: selModelId.value };
+  selProviderId.value = providerId;
+  selModelId.value = modelId;
+  modelOpen.value = false;
+  modelSaving.value = true;
+  try {
+    const res = await updateTaskModel(taskId.value, providerId, modelId);
+    task.value = {
+      ...task.value,
+      providerId: res.providerId,
+      modelId: res.modelId,
+      providerName: res.providerName,
+    };
+    toast("success", `已切换模型：${res.modelId}`);
+  } catch (err) {
+    selProviderId.value = prev.providerId;
+    selModelId.value = prev.modelId;
+    toastError(err, "切换模型失败");
+  } finally {
+    modelSaving.value = false;
+  }
+}
+
+function openModelConfig(): void {
+  modelOpen.value = false;
+  void router.push("/models");
+}
+
+async function loadModelOptions(): Promise<void> {
+  try {
+    modelOptions.value = await listModelOptions();
+  } catch {
+    modelOptions.value = [];
+  }
+}
+
 const messages = ref<TaskMessage[]>([]);
 const deliverables = ref<Deliverable[]>([]);
+
+/** 图片附件：气泡内联 + 点击放大 */
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+function isImageName(name: string): boolean {
+  return IMAGE_EXT.test(name);
+}
+function isImageFile(f: File): boolean {
+  return (f.type && f.type.startsWith("image/")) || isImageName(f.name);
+}
+function attachmentSrc(att: { relPath?: string; previewUrl?: string; filename: string }): string {
+  if (att.previewUrl) return att.previewUrl;
+  if (att.relPath) {
+    return `${API_BASE}/tasks/${taskId.value}/workspace/file?path=${encodeURIComponent(att.relPath)}&token=${encodeURIComponent(getToken())}`;
+  }
+  return "";
+}
+function imageAttachments(m: TaskMessage) {
+  return (m.attachments ?? []).filter((a) => isImageName(a.filename) && attachmentSrc(a));
+}
+function fileAttachments(m: TaskMessage) {
+  return (m.attachments ?? []).filter((a) => !isImageName(a.filename));
+}
+function revokeMessagePreviews(list: TaskMessage[]): void {
+  for (const m of list) {
+    for (const a of m.attachments ?? []) {
+      if (a.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(a.previewUrl);
+    }
+  }
+}
+function mapFilesToAttachments(files: File[]) {
+  return files.map((f) => ({
+    filename: f.name,
+    size: f.size,
+    ...(isImageFile(f) ? { previewUrl: URL.createObjectURL(f) } : {}),
+  }));
+}
+
+/** 输入条附件缩略图：按 File 缓存 blob URL，移除时释放 */
+const composerPreviewCache = new Map<File, string>();
+function composerPreviewUrl(f: File): string {
+  let url = composerPreviewCache.get(f);
+  if (!url) {
+    url = URL.createObjectURL(f);
+    composerPreviewCache.set(f, url);
+  }
+  return url;
+}
+watch(
+  attachments,
+  (list) => {
+    const keep = new Set(list);
+    for (const [f, url] of composerPreviewCache) {
+      if (!keep.has(f)) {
+        URL.revokeObjectURL(url);
+        composerPreviewCache.delete(f);
+      }
+    }
+  },
+  { deep: true }
+);
+
+const lightbox = ref<{ src: string; title: string } | null>(null);
+function openLightbox(src: string, title: string): void {
+  if (!src) return;
+  lightbox.value = { src, title };
+}
+function closeLightbox(): void {
+  lightbox.value = null;
+}
+function onLightboxKey(e: KeyboardEvent): void {
+  if (e.key === "Escape") closeLightbox();
+}
+watch(lightbox, (v) => {
+  if (v) window.addEventListener("keydown", onLightboxKey);
+  else window.removeEventListener("keydown", onLightboxKey);
+});
 // 当前进行中轮次的实时结构化输出（思考流 + 工具步骤 + 实时 Markdown 正文）
 const liveThinking = ref("");
 const liveSteps = ref<TaskTurnStep[]>([]);
@@ -82,6 +289,11 @@ const TOOL_LABELS: Record<string, string> = {
   transcribe_audio: "🎙️ 音频转写",
   delegate_to_agent: "🤝 委派专家",
   fetch_url: "🌐 抓取网页",
+  web_enable: "🔓 启用网页工具",
+  web_search: "🔍 网页搜索",
+  fetch_content: "🌐 抓取内容",
+  get_search_content: "📑 检索缓存",
+  source_check: "📎 来源核验",
   run_code: "🐍 运行代码",
   read_skill: "📚 加载技能",
   run_skill_script: "⚡ 执行技能脚本",
@@ -118,8 +330,20 @@ const draft = ref("");
 const error = ref("");
 const sendError = ref("");
 const previewFile = ref<Deliverable | null>(null);
-const previewCollapsed = ref(false);
-const hasPreviewPanel = computed(() => previewFile.value !== null || deliverables.value.length > 0);
+/** 默认收起；有成果物或用户主动展开时才显示，避免每条对话都撑开浏览器预览 */
+const previewCollapsed = ref(true);
+/** 用户点过「展开预览」后，即使没有成果物也可打开（含浏览器页签） */
+const previewUserOpened = ref(false);
+const previewAvailable = computed(
+  () => previewFile.value !== null || deliverables.value.length > 0 || previewUserOpened.value
+);
+const showPreview = computed(() => previewAvailable.value && !previewCollapsed.value);
+/** 浏览器起始地址：空则显示空白页，由用户输入要预览的 URL（勿默认 5173，那是桌面端自身 Vite） */
+const browserStartUrl = ref("");
+const workspaceFolderName = computed(() => {
+  const raw = (task.value?.workspacePath ?? "").replace(/[\\/]+$/, "");
+  return raw.split(/[\\/]/).pop() || "工作区";
+});
 const chatEl = ref<HTMLElement | null>(null);
 // 用户是否停留在聊天底部附近（决定新消息是否自动滚动，避免打断回看）
 const atBottom = ref(true);
@@ -129,7 +353,78 @@ let elapsedTimer: ReturnType<typeof setInterval> | undefined;
 
 function openPreview(file: Deliverable): void {
   previewFile.value = file;
+  previewUserOpened.value = true;
   previewCollapsed.value = false;
+}
+
+function togglePreview(): void {
+  if (previewCollapsed.value || !previewAvailable.value) {
+    previewUserOpened.value = true;
+    previewCollapsed.value = false;
+  } else {
+    previewCollapsed.value = true;
+  }
+}
+
+// 首次出现成果物时展开预览（成果物列表），不切换到浏览器页签
+watch(
+  () => deliverables.value.length,
+  (n, prev) => {
+    if (n > 0 && !prev) previewCollapsed.value = false;
+  }
+);
+
+interface ChatFileRow {
+  key: string;
+  kind: "dir" | "file";
+  label: string;
+  depth: number;
+  file?: Deliverable;
+}
+
+/** 自选目录把本轮新文件嵌进工作区文件夹；平台工作区只有出现子目录时才分组。 */
+function chatFileRows(files: Deliverable[] | undefined): ChatFileRow[] {
+  const list = files ?? [];
+  const custom = !!task.value?.customWorkspace;
+  const nested = list.some((file) => file.relPath.includes("/") || file.relPath.includes("\\"));
+  if (!custom && !nested) {
+    return list.map((file) => ({ key: file.id, kind: "file", label: file.relPath, depth: 0, file }));
+  }
+  interface DirNode {
+    name: string;
+    path: string;
+    dirs: Map<string, DirNode>;
+    files: Deliverable[];
+  }
+  const root: DirNode = { name: workspaceFolderName.value, path: "", dirs: new Map(), files: [] };
+  for (const file of list) {
+    const parts = file.relPath.replace(/\\/g, "/").split("/").filter(Boolean);
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const name = parts[i]!;
+      const dirPath = parts.slice(0, i + 1).join("/");
+      let child = node.dirs.get(name);
+      if (!child) {
+        child = { name, path: dirPath, dirs: new Map(), files: [] };
+        node.dirs.set(name, child);
+      }
+      node = child;
+    }
+    node.files.push(file);
+  }
+  const rows: ChatFileRow[] = [];
+  const walk = (node: DirNode, depth: number, includeSelf: boolean): void => {
+    if (includeSelf) rows.push({ key: `dir:${node.path || "root"}`, kind: "dir", label: node.name, depth });
+    const childDepth = includeSelf ? depth + 1 : depth;
+    for (const child of [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name, "zh"))) {
+      walk(child, childDepth, true);
+    }
+    for (const file of [...node.files].sort((a, b) => a.filename.localeCompare(b.filename, "zh"))) {
+      rows.push({ key: file.id, kind: "file", label: file.filename, depth: childDepth, file });
+    }
+  };
+  walk(root, 0, custom);
+  return rows;
 }
 
 const running = computed(() => task.value?.status === "running" || task.value?.status === "pending");
@@ -193,7 +488,10 @@ async function onApprove(): Promise<void> {
   approving.value = true;
   try {
     await approveTask(taskId.value, items);
-    toast("success", "已确认执行清单，Agent 开始执行");
+    // 服务端确认后会把 plan 升为 autonomous
+    accessMode.value = "autonomous";
+    if (task.value) task.value = { ...task.value, accessMode: "autonomous" };
+    toast("success", "已确认计划，Agent 开始执行");
     planItems.value = [];
   } catch (err) {
     toastError(err, "提交审批失败");
@@ -374,7 +672,12 @@ function handleEnvelope(env: TaskEventEnvelope): void {
   }
   if (env.kind === "task") {
     const prevStatus = task.value?.status;
-    if (task.value) task.value.status = env.status;
+    if (task.value) {
+      task.value.status = env.status;
+      // 以本事件为准清掉上一轮残留的 error。横幅若一直停在「请重新派发」，
+      // 用户会再次发送，把正在跑的轮次打断，问句就只剩一串堆在上面。
+      task.value.error = env.error ?? null;
+    }
     if (env.status === "running") {
       resetLive();
       toolApproval.value = null; // 审批落定（放行/拒绝/超时）后任务回到运行态
@@ -427,7 +730,11 @@ function handleEnvelope(env: TaskEventEnvelope): void {
 }
 
 async function refreshMessages(): Promise<void> {
-  messages.value = await getTaskMessages(taskId.value).catch(() => messages.value);
+  const next = await getTaskMessages(taskId.value).catch(() => null);
+  if (next) {
+    revokeMessagePreviews(messages.value);
+    messages.value = next;
+  }
   if (task.value?.status === "awaiting_approval") parsePlanItems();
 }
 
@@ -438,11 +745,59 @@ async function refreshDeliverables(): Promise<void> {
 async function refreshAll(): Promise<void> {
   try {
     task.value = await getTask(taskId.value);
-    await Promise.all([refreshMessages(), refreshDeliverables(), refreshSessionGrants()]);
+    await Promise.all([refreshMessages(), refreshDeliverables(), refreshSessionGrants(), loadModelOptions()]);
     // 常驻订阅：多轮对话期间页面不关流，重连靠 seq 去重
     closeEvents = openTaskEvents(taskId.value, handleEnvelope);
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载失败";
+  }
+}
+
+/** 预览区网页标注 → 作为用户消息（可带截图附件）发进当前任务 */
+async function onBrowserAnnotate(payload: { prompt: string; screenshot?: File }): Promise<void> {
+  if (sending.value) {
+    toast("info", "当前正在发送，请稍后再标注");
+    return;
+  }
+  const wasRunning = running.value;
+  sending.value = true;
+  sendError.value = "";
+  if (!wasRunning) {
+    messages.value = [
+      ...messages.value,
+      {
+        id: `local-annotate-${Date.now()}`,
+        taskId: taskId.value,
+        role: "user",
+        content: payload.prompt,
+        createdAt: new Date().toISOString(),
+        ...(payload.screenshot
+          ? { attachments: mapFilesToAttachments([payload.screenshot]) }
+          : {}),
+      },
+    ];
+  }
+  try {
+    if (payload.screenshot) {
+      await sendTaskMessageWithFiles(
+        taskId.value,
+        payload.prompt,
+        [payload.screenshot],
+        undefined,
+        wasRunning
+      );
+    } else {
+      await sendTaskMessage(taskId.value, payload.prompt, undefined, wasRunning);
+    }
+    previewUserOpened.value = true;
+    previewCollapsed.value = false;
+    await Promise.all([refreshMessages(), refreshDeliverables()]);
+  } catch (err) {
+    toastError(err, "标注发送失败");
+    sendError.value = err instanceof Error ? err.message : "标注发送失败";
+    await refreshMessages();
+  } finally {
+    sending.value = false;
   }
 }
 
@@ -458,17 +813,29 @@ async function onSend(): Promise<void> {
   draft.value = "";
   slash.state.open = false;
   mention.state.open = false;
-  // 本地乐观插入，服务端确认后由消息列表刷新接管
-  messages.value = [
-    ...messages.value,
-    { id: `local-${Date.now()}`, taskId: taskId.value, role: "user", content: prompt, createdAt: new Date().toISOString() },
-  ];
+  // 运行中不先把新问句插进列表：服务端要先把当前轮的回复落库，新问句才排在它后面。
+  // 先乐观插入的话，新问句会跑到正在生成的回答上面。
+  if (!wasRunning) {
+    messages.value = [
+      ...messages.value,
+      {
+        id: `local-${Date.now()}`,
+        taskId: taskId.value,
+        role: "user",
+        content: prompt,
+        createdAt: new Date().toISOString(),
+        attachments: mapFilesToAttachments(files),
+      },
+    ];
+  }
   try {
     if (files.length) await sendTaskMessageWithFiles(taskId.value, prompt, files, mentions, wasRunning);
     else await sendTaskMessage(taskId.value, prompt, mentions, wasRunning);
     mention.pendingMentions.value = [];
     resetAttachments();
     if (wasRunning) toast("info", "已打断当前轮次，正在以新消息继续对话");
+    // 用服务端消息覆盖乐观插入，带上附件 meta
+    await refreshMessages();
   } catch (err) {
     sendError.value = err instanceof Error ? err.message : "发送失败";
     await refreshMessages();
@@ -490,7 +857,8 @@ function onKeydown(e: KeyboardEvent): void {
 const taRef = ref<HTMLTextAreaElement | null>(null);
 const mention = useMentions({ prompt: draft, taRef, onFallbackKey: onKeydown });
 // ---------- / 斜杠技能：键入 / 弹技能候选，与 @ 弹层互斥 ----------
-const slash = useSlashSkills({ prompt: draft, taRef });
+const slashAgentId = computed(() => task.value?.agentId ?? "");
+const slash = useSlashSkills({ prompt: draft, taRef, agentId: slashAgentId });
 
 /** 弹层键盘链：/ 技能弹层优先，其次 @ 引用弹层，最后宿主（Enter 发送） */
 function onTaKeydown(e: KeyboardEvent): void {
@@ -663,6 +1031,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   closeEvents?.();
   clearInterval(elapsedTimer);
+  revokeMessagePreviews(messages.value);
+  for (const url of composerPreviewCache.values()) URL.revokeObjectURL(url);
+  composerPreviewCache.clear();
+  closeLightbox();
+  window.removeEventListener("keydown", onLightboxKey);
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
@@ -680,6 +1053,15 @@ onBeforeUnmount(() => {
           <svg class="icon" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
         </RouterLink>
         <span class="v-divider" />
+        <!-- Codex 式：项目文件夹任务在标题前显示文件夹名 -->
+        <span
+          v-if="task.customWorkspace && task.workspacePath"
+          class="tb-folder"
+          :title="task.workspacePath"
+        >
+          <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
+          <span class="tb-folder-name">{{ workspaceFolderName }}</span>
+        </span>
         <div class="tb-text">
           <div v-if="editingTitle" class="tb-title-edit">
             <input
@@ -704,6 +1086,19 @@ onBeforeUnmount(() => {
       </div>
       <div class="tb-right">
         <span class="status" :class="task.status">{{ STATUS_TEXT[task.status] ?? task.status }}</span>
+        <button
+          type="button"
+          class="panel-toggle"
+          :class="{ on: showPreview }"
+          :title="showPreview ? '收起预览' : '展开预览（成果物 / 浏览器）'"
+          :aria-pressed="showPreview"
+          @click="togglePreview"
+        >
+          <svg class="icon" viewBox="0 0 24 24">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M15 3v18" />
+          </svg>
+        </button>
         <button v-if="running" class="sm danger" @click="onCancel">取消本轮</button>
         <button v-if="task.status === 'failed'" class="sm retry" :disabled="retrying" @click="onRetry">
           {{ retrying ? "重试中…" : "重试本轮" }}
@@ -719,7 +1114,34 @@ onBeforeUnmount(() => {
           <div class="thread">
             <template v-for="m in messages" :key="m.id">
               <div v-if="m.role === 'user'" class="msg user">
-                <div class="bubble">{{ m.content }}</div>
+                <div class="bubble" :class="{ 'has-images': imageAttachments(m).length }">
+                  <!-- 主流：图片在上、问题在下；点击缩略图放大 -->
+                  <div v-if="imageAttachments(m).length" class="msg-images">
+                    <button
+                      v-for="(att, ai) in imageAttachments(m)"
+                      :key="`${m.id}-img-${ai}`"
+                      type="button"
+                      class="msg-img-btn"
+                      :title="`点击放大 · ${att.filename}`"
+                      @click="openLightbox(attachmentSrc(att), att.filename)"
+                    >
+                      <img :src="attachmentSrc(att)" :alt="att.filename" class="msg-img" loading="lazy" />
+                    </button>
+                  </div>
+                  <div v-if="m.content.trim()" class="bubble-text">{{ m.content }}</div>
+                  <div v-if="fileAttachments(m).length" class="msg-attach">
+                    <span
+                      v-for="(att, ai) in fileAttachments(m)"
+                      :key="`${m.id}-att-${ai}`"
+                      class="msg-file"
+                      :title="att.relPath || att.filename"
+                    >
+                      <svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                      <span class="msg-fname">{{ att.filename }}</span>
+                      <span class="msg-fsize">{{ formatSize(att.size) }}</span>
+                    </span>
+                  </div>
+                </div>
               </div>
               <div v-else class="msg assistant">
                 <AgentAvatar :name="task.agentName" :size="26" class="msg-avatar" />
@@ -774,14 +1196,25 @@ onBeforeUnmount(() => {
                     成果物
                     <span class="fb-count">{{ filesAfterMsg.get(m.id)?.length }}</span>
                   </div>
-                  <button v-for="f in filesAfterMsg.get(m.id)" :key="f.id" class="fb-row" @click="openPreview(f)">
-                    <span class="file-icon">{{ fileEmoji(f.filename) }}</span>
-                    <span class="fc-name mono">{{ f.relPath }}</span>
-                    <span class="fc-size">{{ formatSize(f.size) }}</span>
-                    <span class="fb-dl" title="下载" @click.stop="downloadDeliverable(taskId, f)">
-                      <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
-                    </span>
-                  </button>
+                  <template v-for="row in chatFileRows(filesAfterMsg.get(m.id))" :key="row.key">
+                    <div v-if="row.kind === 'dir'" class="fb-row fb-dir" :style="{ paddingLeft: `${12 + row.depth * 16}px` }">
+                      <span class="file-icon">📁</span>
+                      <span class="fc-name mono">{{ row.label }}</span>
+                    </div>
+                    <button
+                      v-else-if="row.file"
+                      class="fb-row"
+                      :style="{ paddingLeft: `${12 + row.depth * 16}px` }"
+                      @click="openPreview(row.file)"
+                    >
+                      <span class="file-icon">{{ fileEmoji(row.file.filename) }}</span>
+                      <span class="fc-name mono">{{ row.label }}</span>
+                      <span class="fc-size">{{ formatSize(row.file.size) }}</span>
+                      <span class="fb-dl" title="下载" @click.stop="downloadDeliverable(taskId, row.file)">
+                        <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+                      </span>
+                    </button>
+                  </template>
                 </div>
               </div>
             </template>
@@ -824,7 +1257,14 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="composer-zone">
+        <div
+          class="composer-zone"
+          :class="{ 'drop-hover': dragging }"
+          @dragenter.prevent="onDragEnter"
+          @dragover.prevent="onDragEnter"
+          @dragleave.prevent="onDragLeave"
+          @drop.prevent="onDrop"
+        >
           <div v-if="sessionGrants.length" class="session-grants">
             <span>本会话已授权</span>
             <span v-for="tool in sessionGrants" :key="tool" class="grant-chip">
@@ -861,10 +1301,10 @@ onBeforeUnmount(() => {
           <!-- 高风险审批面板：等待逐项确认时接管输入区 -->
           <div v-else-if="awaitingApproval" class="approval-panel">
             <div class="ap-head">
-              <span class="ap-badge">高风险任务</span>
+              <span class="ap-badge">计划模式</span>
               <div class="ap-head-text">
-                <h3>执行清单待确认</h3>
-                <p>Agent 已生成执行计划但尚未执行。请逐项勾选确认后放行，未勾选的项目不会被执行。</p>
+                <h3>确认计划并执行</h3>
+                <p>Agent 已生成执行计划但尚未改动文件。请逐项勾选确认后放行，未勾选的项目不会被执行；确认后权限将升为自主模式。</p>
               </div>
             </div>
             <ul v-if="planItems.length" class="ap-items">
@@ -891,23 +1331,17 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
-          <div
-            v-else
-            class="composer"
-            :class="{ 'drop-hover': dragging }"
-            @dragenter.prevent="onDragEnter"
-            @dragover.prevent="onDragEnter"
-            @dragleave.prevent="onDragLeave"
-            @drop.prevent="onDrop"
-          >
+          <div v-else class="composer">
             <MentionChips :api="mention" />
             <div v-if="attachments.length" class="attach-strip">
               <span
                 v-for="(f, i) in attachments"
                 :key="`${f.name}-${f.size}-${i}`"
                 class="file-chip"
+                :class="{ image: isImageFile(f) }"
                 :title="`${f.name}（${formatSize(f.size)}）`"
               >
+                <img v-if="isImageFile(f)" :src="composerPreviewUrl(f)" :alt="f.name" class="chip-thumb" />
                 <span class="fname">{{ f.name }}</span>
                 <span class="fsize">{{ formatSize(f.size) }}</span>
                 <span class="fremove" title="移除附件" @click="removeAttachment(i)">✕</span>
@@ -918,7 +1352,7 @@ onBeforeUnmount(() => {
               ref="taRef"
               v-model="draft"
               rows="2"
-              :placeholder="running ? 'Agent 正在执行本轮，输入消息将打断并继续对话…' : '继续追问，输入 @ 引用联系人 / 云文档，输入 / 调用技能，支持 Ctrl+V 粘贴截图'"
+              :placeholder="running ? 'Agent 正在执行本轮，输入消息将打断并继续对话…' : '继续追问；可拖入文件，或 Ctrl+V 粘贴截图；输入 @ / 调用引用与技能'"
               @keydown="onTaKeydown"
               @input="detectPopups"
               @click="detectPopups"
@@ -931,6 +1365,53 @@ onBeforeUnmount(() => {
                 <AgentAvatar :name="task.agentName" :size="15" />
                 {{ task.agentName }}
               </span>
+              <AccessModePicker :model-value="accessMode" compact @update:model-value="onAccessModeChange" />
+              <div class="model-select">
+                <button
+                  type="button"
+                  ref="modelTrigger"
+                  class="model-trigger"
+                  :class="{ on: !!selModelId, open: modelOpen }"
+                  :disabled="modelSaving"
+                  :title="selModelId ? `${selectedProviderName} · ${selModelId}（点击切换）` : '选择模型'"
+                  @click="toggleModelOpen"
+                >
+                  <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M9 9h6v6H9z" /></svg>
+                  <span class="model-label">{{ selectedModelLabel }}</span>
+                  <svg class="caret" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
+                </button>
+                <teleport to="body">
+                  <div v-if="modelOpen" class="model-overlay" @click.self="modelOpen = false">
+                    <div class="model-pop" :style="modelPopStyle">
+                      <div class="pop-head">选择模型 <span class="pop-count">{{ modelCount }} 个可用</span></div>
+                      <div v-if="modelCount > 4" class="pop-search-wrap">
+                        <input v-model="modelSearch" class="pop-search" placeholder="搜索模型名称…" />
+                      </div>
+                      <div v-if="filteredModelOptions.length" class="pop-list">
+                        <div v-for="g in filteredModelOptions" :key="g.providerId" class="pop-group">
+                          <div class="group-name">{{ g.providerName }}</div>
+                          <button
+                            v-for="m in g.models"
+                            :key="g.providerId + '/' + m"
+                            type="button"
+                            class="pop-item"
+                            :class="{ active: g.providerId === selProviderId && m === selModelId }"
+                            @click="pickModel(g.providerId, m)"
+                          >
+                            <span class="m-id">{{ m }}</span>
+                            <svg v-if="g.providerId === selProviderId && m === selModelId" class="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div v-else-if="modelCount" class="pop-empty">无匹配模型</div>
+                      <div v-else class="pop-empty">还没有可用模型，请先在「模型供应商」添加并启用</div>
+                      <div class="pop-foot">
+                        <button type="button" class="config-link" @click="openModelConfig">配置模型</button>
+                      </div>
+                    </div>
+                  </div>
+                </teleport>
+              </div>
               <button
                 type="button"
                 class="attach-btn"
@@ -967,7 +1448,7 @@ onBeforeUnmount(() => {
       </section>
 
       <div
-        v-if="hasPreviewPanel && !previewCollapsed"
+        v-if="showPreview"
         class="splitter"
         :class="{ active: draggingCol }"
         title="拖拽调整预览宽度 · 双击复位"
@@ -976,18 +1457,38 @@ onBeforeUnmount(() => {
       ></div>
 
       <PreviewPanel
+        v-if="showPreview"
         :task-id="taskId"
         :workspace-path="task.workspacePath"
         :file="previewFile"
         :deliverables="deliverables"
-        v-model:collapsed="previewCollapsed"
         :width="previewCssWidth"
+        enable-browser
+        :browser-url="browserStartUrl"
+        allow-empty
         @open="openPreview"
         @close="previewFile = null"
+        @annotate="onBrowserAnnotate"
       />
     </div>
   </div>
   <p v-else-if="error" class="err-page">{{ error }}</p>
+
+  <!-- 图片放大灯箱（主流聊天：点缩略图全屏看） -->
+  <teleport to="body">
+    <div
+      v-if="lightbox"
+      class="img-lightbox"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="lightbox.title"
+      @click.self="closeLightbox"
+    >
+      <button type="button" class="lb-close" title="关闭（Esc）" @click="closeLightbox">✕</button>
+      <img :src="lightbox.src" :alt="lightbox.title" class="lb-img" @click.stop />
+      <p class="lb-caption">{{ lightbox.title }}</p>
+    </div>
+  </teleport>
 </template>
 
 <style scoped>
@@ -1010,6 +1511,36 @@ onBeforeUnmount(() => {
   padding: 9px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
+}
+.tb-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  max-width: 140px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+.tb-folder .icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--text-3);
+}
+.tb-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tb-left {
   display: flex;
@@ -1086,6 +1617,29 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+}
+.panel-toggle {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+}
+.panel-toggle:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.panel-toggle.on {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.panel-toggle .icon {
+  width: 16px;
+  height: 16px;
 }
 button.sm {
   width: auto;
@@ -1178,8 +1732,89 @@ button.sm {
   padding: 9px 13px;
   font-size: 13.5px;
   line-height: 1.65;
+}
+.msg.user .bubble.has-images {
+  padding: 8px;
+}
+.msg.user .msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.msg.user .msg-img-btn {
+  display: block;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  cursor: zoom-in;
+  overflow: hidden;
+  max-width: 100%;
+}
+.msg.user .msg-img {
+  display: block;
+  max-width: min(360px, 100%);
+  max-height: 240px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--surface);
+  vertical-align: middle;
+}
+.msg.user .msg-img-btn:hover .msg-img {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.msg.user .bubble-text {
   white-space: pre-wrap;
   word-break: break-word;
+  padding: 0 5px 2px;
+}
+.msg.user .msg-attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 4px;
+}
+.msg.user .msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.msg.user .msg-file .icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--accent);
+}
+.msg.user .msg-fname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+  color: var(--text);
+  font-weight: 500;
+}
+.msg.user .msg-fsize {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-size: 11px;
 }
 .msg.assistant {
   display: flex;
@@ -1258,6 +1893,10 @@ button.sm {
   width: 14px;
   height: 14px;
   color: var(--text-3);
+}
+.fb-dir {
+  cursor: default;
+  color: var(--text-2);
 }
 .fb-count {
   background: var(--surface-2);
@@ -1458,6 +2097,11 @@ button.sm {
   flex-shrink: 0;
   padding: 6px 28px 16px;
 }
+.composer-zone.drop-hover .composer {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(23, 126, 91, 0.14);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
 .composer {
   max-width: 780px;
   margin: 0 auto;
@@ -1476,10 +2120,6 @@ button.sm {
 :root[data-theme="dark"] .composer:focus-within {
   box-shadow: 0 0 0 3px rgba(47, 157, 117, 0.22);
 }
-.composer.drop-hover {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(23, 126, 91, 0.14);
-}
 .attach-strip {
   display: flex;
   flex-wrap: wrap;
@@ -1497,6 +2137,18 @@ button.sm {
   border-radius: 8px;
   padding: 3px 8px;
   max-width: 220px;
+}
+.file-chip.image {
+  max-width: 280px;
+  padding-left: 4px;
+}
+.file-chip .chip-thumb {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: var(--surface);
 }
 .file-chip .fname {
   overflow: hidden;
@@ -1794,5 +2446,229 @@ button.sm {
   border: 1px solid var(--danger-border);
   border-radius: var(--radius);
   font-size: 13.5px;
+}
+.model-select {
+  position: relative;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  padding: 3px 8px 3px 6px;
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-2);
+  box-shadow: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.model-trigger .icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  color: var(--accent);
+}
+.model-trigger .caret {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  color: var(--text-3);
+}
+.model-trigger.open .caret {
+  transform: rotate(180deg);
+}
+.model-trigger.on {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+.model-trigger:hover:not(:disabled) {
+  color: var(--text);
+}
+.model-trigger:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.model-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+.model-pop {
+  position: fixed;
+  width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.pop-count {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.pop-search-wrap {
+  padding: 0 10px 6px;
+}
+.pop-search {
+  width: 100%;
+  font-size: 12.5px;
+  padding: 5px 10px;
+  border-radius: 8px;
+}
+.pop-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 0 6px 6px;
+}
+.pop-group {
+  margin-bottom: 4px;
+}
+.group-name {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.pop-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.pop-item:hover {
+  background: var(--surface-2);
+}
+.pop-item.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.pop-item .check {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  flex-shrink: 0;
+}
+.m-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pop-empty {
+  padding: 16px 14px;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.pop-foot {
+  border-top: 1px solid var(--border-faint);
+  padding: 6px;
+}
+.config-link {
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.config-link:hover {
+  background: var(--accent-soft);
+}
+</style>
+
+<!-- 灯箱挂到 body，须全局样式 -->
+<style>
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px 28px;
+  background: rgba(10, 12, 16, 0.78);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+}
+.img-lightbox .lb-close {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+.img-lightbox .lb-close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.img-lightbox .lb-img {
+  max-width: min(96vw, 1200px);
+  max-height: calc(100vh - 100px);
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+  cursor: default;
+  background: #111;
+}
+.img-lightbox .lb-caption {
+  margin: 0;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.75);
+  max-width: 90vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

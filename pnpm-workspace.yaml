@@ -1,3 +1,6 @@
 packages:
   - apps/*
   - packages/*
+
+# deploy 到 dist/stage 时避免共享 lockfile 路径问题（pnpm 官方建议）
+forceLegacyDeploy: true

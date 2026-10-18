@@ -17,8 +17,20 @@ export const paths = {
   agentDir: path.join(config.dataDir, "agent"),
 };
 
+// pi-web-access 默认读 ~/.pi/agent/web-search.json；未显式指定时绑到平台 agentDir。
+if (!process.env.PI_CODING_AGENT_DIR) {
+  process.env.PI_CODING_AGENT_DIR = paths.agentDir;
+}
+
 export function ensureDirs(): void {
   for (const dir of [config.dataDir, paths.sessions, paths.workspaces, paths.agentFolders, paths.agentDir]) {
     fs.mkdirSync(dir, { recursive: true });
   }
+}
+
+/** 是否为平台按任务隔离的工作区（data/workspaces/...）。专家常驻目录与用户自选目录都不算。 */
+export function isPlatformWorkspace(workspacePath: string): boolean {
+  const root = path.resolve(paths.workspaces);
+  const dir = path.resolve(workspacePath);
+  return dir === root || dir.startsWith(root + path.sep);
 }

@@ -1,7 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, webContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { showServerStartError, startBundledServer, stopBundledServer } from "./server-host.js";
+
+// scoped 包名 @office/desktop 会让 userData 变成 Roaming\@office/desktop（含 /），Windows 上写数据会失败
+if (app.isPackaged) {
+  app.setPath("userData", path.join(app.getPath("appData"), "Agent Office"));
+}
 
 /** 中文应用菜单（Electron 默认菜单在 Windows 上是英文） */
 function buildChineseMenu(): void {
@@ -73,6 +79,8 @@ function createWindow(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // 任务预览区内嵌浏览器（网页标注）依赖 <webview>
+      webviewTag: true,
       preload: path.join(__dirname, "../preload/index.js"),
     },
   });
@@ -83,12 +91,26 @@ function createWindow(): void {
   } else {
     void win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+
+  // 禁止主窗口被外链/about:blank 顶掉（表现为整窗只剩菜单的白屏）
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (event, url) => {
+    try {
+      const cur = win.webContents.getURL();
+      if (!cur || cur === "about:blank") return;
+      if (new URL(cur).origin === new URL(url).origin) return;
+    } catch {
+      return;
+    }
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  });
 }
 
-app.whenReady().then(() => {
-  buildChineseMenu();
-
-  // 渲染器选择任务工作目录（原生目录选择框）
+function registerIpc(): void {
   ipcMain.handle("agent-office:pick-directory", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(win!, {
@@ -100,7 +122,6 @@ app.whenReady().then(() => {
     return result.filePaths[0]!;
   });
 
-  // 在系统文件管理器中打开目录，或用系统默认程序打开本地文件（如用 WPS 打开 .docx/.xlsx）
   ipcMain.handle("agent-office:open-path", async (_event, target: unknown) => {
     if (typeof target !== "string" || !path.isAbsolute(target)) return { ok: false, message: "路径无效" };
     try {
@@ -112,7 +133,6 @@ app.whenReady().then(() => {
     return err ? { ok: false, message: err } : { ok: true };
   });
 
-  // 在系统文件管理器中定位并高亮指定文件
   ipcMain.handle("agent-office:show-item-in-folder", async (_event, target: unknown) => {
     if (typeof target !== "string" || !path.isAbsolute(target)) return { ok: false, message: "路径无效" };
     try {
@@ -124,7 +144,6 @@ app.whenReady().then(() => {
     }
   });
 
-  // 发送桌面原生系统通知（后台任务完成/待人工确认时提醒用户）
   ipcMain.handle("agent-office:notify", async (event, payload: unknown) => {
     if (!Notification.isSupported() || !payload || typeof payload !== "object") return { ok: false };
     const { title, body } = payload as { title?: unknown; body?: unknown };
@@ -144,10 +163,42 @@ app.whenReady().then(() => {
     return { ok: true };
   });
 
+  /** 在主进程截取 webview 页面，避免渲染进程 capturePage 把窗口打成白屏 */
+  ipcMain.handle("agent-office:capture-webcontents", async (_event, webContentsId: unknown) => {
+    if (typeof webContentsId !== "number" || !Number.isFinite(webContentsId)) {
+      return { ok: false as const, message: "invalid id" };
+    }
+    try {
+      const wc = webContents.fromId(webContentsId);
+      if (!wc || wc.isDestroyed()) return { ok: false as const, message: "webview gone" };
+      const img = await wc.capturePage();
+      return { ok: true as const, png: img.toPNG() };
+    } catch (err) {
+      return { ok: false as const, message: err instanceof Error ? err.message : "capture failed" };
+    }
+  });
+}
+
+app.whenReady().then(async () => {
+  buildChineseMenu();
+  registerIpc();
+
+  try {
+    await startBundledServer();
+  } catch (err) {
+    await showServerStartError(err);
+    app.quit();
+    return;
+  }
+
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("before-quit", () => {
+  stopBundledServer();
 });
 
 app.on("window-all-closed", () => {

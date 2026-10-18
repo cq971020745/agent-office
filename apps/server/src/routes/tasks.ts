@@ -2,17 +2,36 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import fs from "node:fs";
 import path from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { isChatModel, type AgentConfig, type AgentTaskWithDeliverables, type Task, type TaskStatus, type WpsMention } from "@office/shared";
+import {
+  isChatModel,
+  type AccessMode,
+  type AgentConfig,
+  type AgentTaskWithDeliverables,
+  type Task,
+  type TaskStatus,
+  type WpsMention,
+} from "@office/shared";
 import { currentUser } from "../auth.js";
-import { paths } from "../config.js";
+import { ensureTextInProvider } from "../textin-provider.js";
+import { isPlatformWorkspace, paths } from "../config.js";
 import { db, now, uuid } from "../db.js";
 import { attachSse, clearTask, publishStatus } from "../sse.js";
-import { approveTask, cancelTask, dropTask, sendMessage, startTask, waitTaskIdle } from "../runner.js";
+import {
+  approveTask,
+  cancelTask,
+  dropTask,
+  invalidateSession,
+  sendMessage,
+  startTask,
+  waitTaskIdle,
+} from "../runner.js";
 import { listSessionGrants, parseToolDecision, resolveToolApproval, revokeSessionGrant } from "../tool-approval.js";
-import { listSkills } from "../skills.js";
+import { parseAccessMode } from "../tool-policy.js";
+import { listEffectiveSkills, listSkills } from "../skills.js";
 import { getAgentSkillBinding } from "../skills.js";
 import { moveFile, stageMultipartFiles, uniqueTargetPath, attachmentNote, type StagedUpload } from "../uploads.js";
 import { buildMentionsNote, parseMentionsField, sanitizeMentions } from "../mentions.js";
+import { listWorkspaceEntries, resolveInsideWorkspace } from "../workspace-tree.js";
 
 /** 审批流在任务时间线里留痕（拒绝/取消），复用 runner 的消息表结构。 */
 function insertMessage(taskId: string, role: "user", content: string): void {
@@ -38,7 +57,9 @@ interface TaskRow {
   finished_at: string | null;
   workspace_path: string;
   custom_workspace: number;
+  access_mode: string;
   agent_name: string;
+  provider_id: string | null;
   model_id: string | null;
   provider_name: string | null;
 }
@@ -56,17 +77,21 @@ function toTaskDto(row: TaskRow): Task {
     createdAt: row.created_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    providerId: row.provider_id ?? "",
     providerName: row.provider_name ?? "",
     modelId: row.model_id ?? "",
     workspacePath: row.workspace_path,
     customWorkspace: !!row.custom_workspace,
+    accessMode: parseAccessMode(row.access_mode) ?? "autonomous",
   };
 }
 
 const SELECT_TASK = `
   SELECT t.id, t.user_id, t.agent_id, t.title, t.prompt, t.status, t.error,
          t.created_at, t.started_at, t.finished_at, t.workspace_path, t.custom_workspace,
+         COALESCE(t.access_mode, 'autonomous') AS access_mode,
          a.name AS agent_name,
+         COALESCE(t.provider_id, a.provider_id) AS provider_id,
          COALESCE(t.model_id, a.model_id) AS model_id,
          p.name AS provider_name
   FROM tasks t
@@ -210,9 +235,11 @@ export function registerTaskRoutes(app: FastifyInstance): void {
 
   // 派发时可选的模型：所有启用供应商下的「可用模型」；向量/重排等非对话模型不进选择列表
   app.get("/models", { onRequest: [app.authenticate] }, async (req) => {
+    const userId = currentUser(req).id;
+    ensureTextInProvider(userId);
     const rows = db
       .prepare("SELECT id, name, enabled_models FROM model_providers WHERE enabled = 1 AND user_id = ? ORDER BY created_at")
-      .all(currentUser(req).id) as { id: string; name: string; enabled_models: string }[];
+      .all(userId) as { id: string; name: string; enabled_models: string }[];
     return rows.map((r) => ({
       providerId: r.id,
       providerName: r.name,
@@ -308,6 +335,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       modelId?: string;
       workspaceDir?: string;
       mentions?: unknown;
+      accessMode?: unknown;
     } = {};
     // multipart 附件先落到暂存目录：工作区取决于字段值，而字段可能在文件分片之后才到达
     const stageDir = isMultipart ? path.join(paths.workspaces, `_stage-${uuid()}`) : "";
@@ -322,6 +350,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
           "modelId",
           "workspaceDir",
           "mentions",
+          "accessMode",
         ]);
         body = parsed.fields as typeof body;
         // multipart 字段全是字符串：mentions 以 JSON 字符串传递
@@ -337,21 +366,33 @@ export function registerTaskRoutes(app: FastifyInstance): void {
         return reply.code(400).send({ error: "prompt is required" });
       }
       // 专家非必选：显式指定优先，未指定时落到内置「通用助手」，再退化到第一个可用专家
-      type AgentPick = { id: string; provider_id: string | null; model_id: string | null; folder: string };
+      type AgentPick = {
+        id: string;
+        provider_id: string | null;
+        model_id: string | null;
+        folder: string;
+        high_risk: number;
+      };
       let agent = body.agentId
         ? (db
-            .prepare("SELECT id, provider_id, model_id, folder FROM agents WHERE id = ? AND deleted = 0")
+            .prepare("SELECT id, provider_id, model_id, folder, high_risk FROM agents WHERE id = ? AND deleted = 0")
             .get(body.agentId) as AgentPick | undefined)
         : undefined;
       if (body.agentId && !agent) return reply.code(400).send({ error: "unknown agent" });
       if (!agent) {
         agent = db
           .prepare(
-            "SELECT id, provider_id, model_id, folder FROM agents WHERE deleted = 0 ORDER BY (id = 'builtin-general-assistant') DESC, created_at LIMIT 1"
+            "SELECT id, provider_id, model_id, folder, high_risk FROM agents WHERE deleted = 0 ORDER BY (id = 'builtin-general-assistant') DESC, created_at LIMIT 1"
           )
           .get() as AgentPick | undefined;
         if (!agent) return reply.code(400).send({ error: "暂无可用专家，请先在专家页创建" });
       }
+      // 显式档位优先；未传时高风险专家默认 plan，否则 autonomous
+      const explicitMode = parseAccessMode(body.accessMode);
+      if (body.accessMode != null && body.accessMode !== "" && !explicitMode) {
+        return reply.code(400).send({ error: "accessMode 无效，可选 plan / confirm / autonomous / full" });
+      }
+      const accessMode: AccessMode = explicitMode ?? (agent.high_risk ? "plan" : "autonomous");
 
       // 模型只从当前用户自己启用的供应商里选，不再回退到专家上的默认模型
       const providerId = body.providerId?.trim() ?? "";
@@ -366,7 +407,8 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       }
 
       const id = uuid();
-      // 工作目录：用户显式选择的目录 > 专家常驻文件夹（WorkBuddy 式，产出沉淀在专家目录）> 平台隔离工作区
+      // 工作目录：用户显式选择的目录 > 专家常驻文件夹（产出仍落专家目录）> 平台隔离工作区
+      // custom_workspace 仅在用户显式选目录时为 1（侧栏「项目」只展示这类任务）；专家常驻目录不算项目
       let workspace: string;
       let customWorkspace = 0;
       if (body.workspaceDir?.trim()) {
@@ -380,7 +422,6 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       } else if (agent.folder) {
         fs.mkdirSync(agent.folder, { recursive: true });
         workspace = agent.folder;
-        customWorkspace = 1;
       } else {
         workspace = path.join(paths.workspaces, id);
         fs.mkdirSync(workspace, { recursive: true });
@@ -393,8 +434,21 @@ export function registerTaskRoutes(app: FastifyInstance): void {
         .filter(Boolean)
         .join("\n");
       db.prepare(
-        "INSERT INTO tasks (id, user_id, agent_id, title, prompt, status, provider_id, model_id, workspace_path, custom_workspace, context_note, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)"
-      ).run(id, user.id, agent.id, title, prompt, providerId, modelId, workspace, customWorkspace, contextNote, now());
+        "INSERT INTO tasks (id, user_id, agent_id, title, prompt, status, provider_id, model_id, workspace_path, custom_workspace, context_note, access_mode, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)"
+      ).run(
+        id,
+        user.id,
+        agent.id,
+        title,
+        prompt,
+        providerId,
+        modelId,
+        workspace,
+        customWorkspace,
+        contextNote,
+        accessMode,
+        now()
+      );
 
       // 附件从暂存区移入工作区并登记（rel_path 相对工作区；登记供成果物扫描排除）
       if (staged.length) {
@@ -454,6 +508,50 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     const row = getTaskRow(id);
     if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
     return toTaskDto(row);
+  });
+
+  /** 追问前可改会话权限；闸门执行时现查，下一跳立即生效。 */
+  app.patch("/tasks/:id/access-mode", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const body = req.body as { accessMode?: unknown };
+    const accessMode = parseAccessMode(body?.accessMode);
+    if (!accessMode) {
+      return reply.code(400).send({ error: "accessMode 无效，可选 plan / confirm / autonomous / full" });
+    }
+    db.prepare("UPDATE tasks SET access_mode = ? WHERE id = ?").run(accessMode, id);
+    return { ok: true as const, accessMode };
+  });
+
+  /** 追问前可切换本任务模型；仅允许当前用户自己启用的供应商/模型。下一轮按新模型开会话。 */
+  app.patch("/tasks/:id/model", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    if (row.status === "running" || row.status === "pending") {
+      return reply.code(409).send({ error: "任务进行中，请等本轮结束或打断后再切换模型" });
+    }
+    const body = req.body as { providerId?: string; modelId?: string };
+    const providerId = body.providerId?.trim() ?? "";
+    const modelId = body.modelId?.trim() ?? "";
+    if (!providerId || !modelId) return reply.code(400).send({ error: "请选择模型" });
+    const user = currentUser(req);
+    const p = db
+      .prepare("SELECT enabled, enabled_models, name FROM model_providers WHERE id = ? AND user_id = ?")
+      .get(providerId, user.id) as { enabled: number; enabled_models: string; name: string } | undefined;
+    if (!p || !p.enabled) return reply.code(400).send({ error: "模型供应商不可用" });
+    if (!parseStringArray(p.enabled_models).includes(modelId)) {
+      return reply.code(400).send({ error: "模型不在该供应商的可用列表中" });
+    }
+    db.prepare("UPDATE tasks SET provider_id = ?, model_id = ? WHERE id = ?").run(providerId, modelId, id);
+    invalidateSession(id);
+    return {
+      ok: true as const,
+      providerId,
+      modelId,
+      providerName: p.name,
+    };
   });
 
   app.patch("/tasks/:id", { onRequest: [app.authenticate] }, async (req, reply) => {
@@ -560,13 +658,9 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     db.prepare("DELETE FROM task_session_grants WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
 
-    // 平台隔离工作区目录位于 data/workspaces 下时才删除（防误删路径之外的内容）
-    if (detail && !detail.custom_workspace) {
-      const root = path.resolve(paths.workspaces);
-      const dir = path.resolve(detail.workspace_path);
-      if (dir.startsWith(root + path.sep)) {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
+    // 仅删除平台隔离工作区（防误删用户自选目录 / 专家常驻目录）
+    if (detail && isPlatformWorkspace(detail.workspace_path)) {
+      fs.rmSync(path.resolve(detail.workspace_path), { recursive: true, force: true });
     }
     // 会话 JSONL：只删本任务的会话文件（同目录可能还有其他任务的会话）
     if (detail?.session_id) {
@@ -590,11 +684,27 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     return rows.map((m) => {
       let thinking: string | undefined;
       let steps: { tool: string; detail?: string; status?: "done" | "error" }[] | undefined;
+      let attachments:
+        | { filename: string; size: number; relPath?: string }[]
+        | undefined;
       if (m.meta) {
         try {
-          const parsed = JSON.parse(m.meta) as { thinking?: unknown; steps?: unknown };
+          const parsed = JSON.parse(m.meta) as {
+            thinking?: unknown;
+            steps?: unknown;
+            attachments?: unknown;
+          };
           if (typeof parsed.thinking === "string" && parsed.thinking.trim()) thinking = parsed.thinking;
           if (Array.isArray(parsed.steps) && parsed.steps.length) steps = parsed.steps;
+          if (Array.isArray(parsed.attachments) && parsed.attachments.length) {
+            attachments = parsed.attachments
+              .filter((a): a is Record<string, unknown> => !!a && typeof a === "object")
+              .map((a) => ({
+                filename: typeof a.filename === "string" ? a.filename : "附件",
+                size: typeof a.size === "number" ? a.size : 0,
+                ...(typeof a.relPath === "string" ? { relPath: a.relPath } : {}),
+              }));
+          }
         } catch {
           // 忽略坏 JSON
         }
@@ -607,6 +717,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
         createdAt: m.created_at,
         ...(thinking ? { thinking } : {}),
         ...(steps ? { steps } : {}),
+        ...(attachments?.length ? { attachments } : {}),
       };
     });
   });
@@ -661,7 +772,13 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       const contextNote = [staged.length ? attachmentNote(staged) : "", buildMentionsNote(mentions)]
         .filter(Boolean)
         .join("\n");
-      const result = sendMessage(id, prompt, contextNote);
+      // 本轮新落盘的附件写入用户消息 meta，供对话气泡展示（文件名保持原名）
+      const turnAttachments = staged.map((s, i) => ({
+        filename: s.filename,
+        size: s.size,
+        relPath: moved[i],
+      }));
+      const result = sendMessage(id, prompt, contextNote, turnAttachments);
       if (result === "busy") {
         rollbackUploads(id, row.workspace_path, moved);
         return reply.code(409).send({ error: "agent 正在执行中，请等本轮结束后再继续" });
@@ -673,11 +790,16 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     }
   });
 
-  // 斜杠技能候选（输入框 / 弹层数据源）：仅登录用户可见的 user-invocable 技能元数据
-  app.get("/skills", { onRequest: [app.authenticate] }, async () => {
-    return listSkills()
-      .filter((s) => s.userInvocable)
-      .map((s) => ({ name: s.name, description: s.description, argumentHint: s.argumentHint }));
+  // 斜杠技能候选（输入框 / 弹层数据源）：当前会话可用的全部技能（专家未绑定时 = 平台技能库）
+  // expandSkillSlash 本身不限制 user-invocable；弹层与展开规则对齐，便于从 ~/.agents 同步来的技能也能 / 选用
+  app.get("/skills", { onRequest: [app.authenticate] }, async (req) => {
+    const agentId = String((req.query as { agentId?: string }).agentId ?? "").trim();
+    const skills = agentId ? listEffectiveSkills(agentId) : listSkills();
+    return skills.map((s) => ({
+      name: s.name,
+      description: s.description,
+      argumentHint: s.argumentHint,
+    }));
   });
 
   // SSE 实况。EventSource 无法带 Authorization 头，用 ?token= 传递 JWT。
@@ -710,6 +832,49 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       attachSse(id, reply.raw);
     }
   );
+
+  // 自选目录的任务按文件夹浏览。dir 相对工作区，空字符串是根目录。
+  app.get("/tasks/:id/workspace", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const dir = ((req.query as { dir?: string }).dir ?? "").trim();
+    const abs = resolveInsideWorkspace(row.workspace_path, dir);
+    if (!abs || !fs.existsSync(abs)) return reply.code(404).send({ error: "目录不存在" });
+    const dirStat = fs.lstatSync(abs);
+    if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) return reply.code(400).send({ error: "不是文件夹" });
+    try {
+      const listed = listWorkspaceEntries(row.workspace_path, dir);
+      return { dir: dir.replace(/\\/g, "/"), ...listed };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "无法读取目录";
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  // 预览工作区里的任意文件（不限于本轮新登记的成果物）。支持 ?token= 供下载链接使用。
+  app.get("/tasks/:id/workspace/file", async (req, reply) => {
+    const header = req.headers.authorization;
+    const queryToken = (req.query as { token?: string }).token;
+    if (!header && queryToken) req.headers.authorization = `Bearer ${queryToken}`;
+    try {
+      await req.jwtVerify();
+    } catch {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const rel = ((req.query as { path?: string }).path ?? "").trim();
+    const abs = resolveInsideWorkspace(row.workspace_path, rel);
+    if (!abs || !fs.existsSync(abs)) return reply.code(404).send({ error: "文件不存在" });
+    const stat = fs.lstatSync(abs);
+    if (!stat.isFile() || stat.isSymbolicLink()) return reply.code(400).send({ error: "不是可预览的文件" });
+    const filename = path.basename(abs);
+    reply.header("content-type", "application/octet-stream");
+    reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    return reply.send(fs.createReadStream(abs));
+  });
 
   app.get("/tasks/:id/deliverables", { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };

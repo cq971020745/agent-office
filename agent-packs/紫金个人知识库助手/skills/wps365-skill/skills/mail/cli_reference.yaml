@@ -1,0 +1,251 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: mail
+run_py: skills/mail/run.py
+schema_version: cli_reference.v1
+subcommands:
+  attachment:
+    usage: run.py attachment [-h] mailbox_id folder_id message_id attachment_id
+    positional:
+    - mailbox_id
+    - folder_id
+    - message_id
+    - attachment_id
+    options: []
+    example: python skills/mail/run.py attachment <mailbox_id> <folder_id> <message_id>
+      <attachment_id>
+    reject_options:
+    - --attachment-id
+    - --attachment_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --folder-id
+    - --folder_id
+    - --mailbox-id
+    - --mailbox_id
+    - --message-id
+    - --message_id
+  draft:
+    usage: run.py draft [-h] [--mailbox-id MAILBOX_ID] [--to TO] [--cc CC]
+    positional: []
+    options:
+    - --attachments
+    - --bcc
+    - --body
+    - --cc
+    - --mailbox-id
+    - --priority
+    - --subject
+    - --to
+    example: python skills/mail/run.py draft
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  folder:
+    usage: run.py folder [-h] mailbox_id folder_id
+    positional:
+    - mailbox_id
+    - folder_id
+    options: []
+    example: python skills/mail/run.py folder <mailbox_id> <folder_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --folder-id
+    - --folder_id
+    - --mailbox-id
+    - --mailbox_id
+  folder-children:
+    usage: run.py folder-children [-h] mailbox_id parent_id
+    positional:
+    - mailbox_id
+    - parent_id
+    options: []
+    example: python skills/mail/run.py folder-children <mailbox_id> <parent_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --mailbox-id
+    - --mailbox_id
+    - --parent-id
+    - --parent_id
+  folders:
+    usage: run.py folders [-h] mailbox_id
+    positional:
+    - mailbox_id
+    options: []
+    example: python skills/mail/run.py folders <mailbox_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --mailbox-id
+    - --mailbox_id
+  forward:
+    usage: run.py forward [-h] [--mailbox-id MAILBOX_ID] --to TO [--body BODY]
+    positional:
+    - folder_id
+    - message_id
+    options:
+    - --attachments
+    - --body
+    - --confirm
+    - --mailbox-id
+    - --operation-id
+    - --to
+    example: python skills/mail/run.py forward <folder_id> <message_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --folder-id
+    - --folder_id
+    - --message-id
+    - --message_id
+  get:
+    usage: run.py get [-h] [--with-ocr-body] [--with-importance-flag]
+    positional:
+    - mailbox_id
+    - folder_id
+    - message_id
+    options:
+    - --with-ocr-body
+    example: python skills/mail/run.py get <mailbox_id> <folder_id> <message_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --folder-id
+    - --folder_id
+    - --mailbox-id
+    - --mailbox_id
+    - --message-id
+    - --message_id
+  list:
+    usage: run.py list [-h] [--mailbox-id MAILBOX_ID] [--thread-id THREAD_ID]
+    positional:
+    - folder_id
+    options:
+    - --end-time
+    - --filter
+    - --mailbox-id
+    - --page-size
+    - --page-token
+    - --start-time
+    - --thread-id
+    example: python skills/mail/run.py list <folder_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --folder-id
+    - --folder_id
+  mailboxes:
+    usage: run.py mailboxes [-h]
+    positional: []
+    options: []
+    example: python skills/mail/run.py mailboxes
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  reply:
+    usage: run.py reply [-h] [--mailbox-id MAILBOX_ID] [--body BODY] [--cc CC]
+    positional:
+    - folder_id
+    - message_id
+    options:
+    - --all
+    - --attachments
+    - --body
+    - --cc
+    - --confirm
+    - --mailbox-id
+    - --operation-id
+    example: python skills/mail/run.py reply <folder_id> <message_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --folder-id
+    - --folder_id
+    - --message-id
+    - --message_id
+  search:
+    usage: run.py search [-h] [--keyword KEYWORD] [--mailbox-ids MAILBOX_IDS]
+    positional: []
+    options:
+    - --attachment
+    - --body
+    - --end-time
+    - --exclude-folders
+    - --filter
+    - --folder-ids
+    - --from
+    - --has-attachment
+    - --keyword
+    - --mailbox-ids
+    - --page-size
+    - --page-token
+    - --priority
+    - --start-time
+    - --subject
+    - --to
+    example: python skills/mail/run.py search
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  send:
+    usage: run.py send [-h] [--confirm] [--operation-id OPERATION_ID]
+    positional:
+    - mailbox_id
+    - message_id
+    options:
+    - --confirm
+    - --operation-id
+    example: python skills/mail/run.py send <mailbox_id> <message_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --mailbox-id
+    - --mailbox_id
+    - --message-id
+    - --message_id
+  send-direct:
+    usage: run.py send-direct [-h] [--mailbox-id MAILBOX_ID] --to TO [--cc CC]
+    positional: []
+    options:
+    - --attachments
+    - --bcc
+    - --body
+    - --cc
+    - --confirm
+    - --mailbox-id
+    - --operation-id
+    - --priority
+    - --subject
+    - --to
+    example: python skills/mail/run.py send-direct
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  upload-attachment:
+    usage: run.py upload-attachment [-h] [--mailbox-id MAILBOX_ID] file_path
+    positional:
+    - file_path
+    options:
+    - --mailbox-id
+    example: python skills/mail/run.py upload-attachment <file_path>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-path
+    - --file_path

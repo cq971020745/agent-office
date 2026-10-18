@@ -3,12 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { Task, WpsProfile } from "@office/shared";
 import {
-  changePassword,
+  detachProject,
   getRole,
   getToken,
   getUsername,
   getWpsMe,
   listTasks,
+  pingKbSession,
   setToken,
   setUsername,
   syncWpsAccount,
@@ -17,7 +18,9 @@ import { timeAgo } from "./utils/format";
 import Toasts from "./components/Toasts.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
 import { confirmDialog } from "./composables/confirm";
-import { toast } from "./composables/toast";
+import { toast, toastError } from "./composables/toast";
+
+type ProjectGroup = { key: string; name: string; path: string; tasks: Task[] };
 
 const route = useRoute();
 const router = useRouter();
@@ -42,7 +45,40 @@ function toggleSidebar(): void {
 }
 
 const allTasks = ref<Task[]>([]);
-const recentTasks = computed(() => allTasks.value.slice(0, 8));
+const folderCollapsed = ref<Record<string, boolean>>({});
+
+function folderKey(path: string): string {
+  return path.replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+}
+
+function folderName(path: string): string {
+  const raw = path.replace(/[\\/]+$/, "");
+  return raw.split(/[\\/]/).pop() || "文件夹";
+}
+
+const folderGroups = computed(() => {
+  const groups = new Map<string, ProjectGroup>();
+  for (const task of allTasks.value) {
+    if (!task.customWorkspace || !task.workspacePath) continue;
+    const key = folderKey(task.workspacePath);
+    const group = groups.get(key) ?? { key, name: folderName(task.workspacePath), path: task.workspacePath, tasks: [] };
+    group.tasks.push(task);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+});
+
+/** 项目行 ⋯ 菜单（Codex / ZCode 式：打开、查看文件、移除） */
+const projectMenuKey = ref("");
+function toggleProjectMenu(key: string, e?: Event): void {
+  e?.stopPropagation();
+  projectMenuKey.value = projectMenuKey.value === key ? "" : key;
+}
+function closeProjectMenu(): void {
+  projectMenuKey.value = "";
+}
+
+const recentTasks = computed(() => allTasks.value.filter((task) => !task.customWorkspace).slice(0, 8));
 const runningCount = computed(
   () => allTasks.value.filter((t) => t.status === "running" || t.status === "pending").length
 );
@@ -61,19 +97,56 @@ async function refreshRecent(): Promise<void> {
 
 // 侧栏轮询：让运行状态与徽标保持新鲜（页面隐藏时跳过）
 let pollTimer: ReturnType<typeof setInterval> | undefined;
+// 知识库访问凭证有空闲超时；本应用 JWT 不过期，必须主动续期，否则工作台会落到知识库自己的登录页。
+const KB_PING_MS = 8 * 60_000;
+let lastKbPing = 0;
+async function pingKb(): Promise<void> {
+  if (!getToken() || document.visibilityState !== "visible") return;
+  lastKbPing = Date.now();
+  try {
+    await pingKbSession();
+  } catch {
+    // 401 由 api.ts 清登录态并回登录页；其它错误忽略，避免打扰
+  }
+}
 function startPolling(): void {
   if (pollTimer) return;
   pollTimer = setInterval(() => {
-    if (document.visibilityState === "visible") void refreshRecent();
+    if (document.visibilityState !== "visible") return;
+    void refreshRecent();
+    if (Date.now() - lastKbPing >= KB_PING_MS) void pingKb();
   }, 5000);
+  void pingKb();
 }
 function stopPolling(): void {
   clearInterval(pollTimer);
   pollTimer = undefined;
 }
 
+function onVisibilityChange(): void {
+  if (document.visibilityState !== "visible" || !getToken()) return;
+  void refreshRecent();
+  if (Date.now() - lastKbPing >= KB_PING_MS) void pingKb();
+}
+
 onMounted(refreshRecent);
+onMounted(() => {
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  document.addEventListener("click", closeProjectMenu);
+});
 watch(() => route.path, refreshRecent);
+watch(
+  () => (typeof route.params.id === "string" ? route.params.id : ""),
+  (id) => {
+    const task = allTasks.value.find((item) => item.id === id);
+    if (!task?.customWorkspace || !task.workspacePath) return;
+    const key = folderKey(task.workspacePath);
+    if (!folderCollapsed.value[key]) return;
+    const next = { ...folderCollapsed.value };
+    delete next[key];
+    folderCollapsed.value = next;
+  }
+);
 watch(loggedIn, (v) => (v ? startPolling() : stopPolling()), { immediate: true });
 
 // 全局兜底：文件拖到窗口非上传区时阻止默认行为，
@@ -86,7 +159,85 @@ window.addEventListener("drop", preventWindowDrop);
 onBeforeUnmount(() => {
   window.removeEventListener("dragover", preventWindowDrop);
   window.removeEventListener("drop", preventWindowDrop);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  document.removeEventListener("click", closeProjectMenu);
 });
+
+function toggleFolder(key: string): void {
+  folderCollapsed.value = { ...folderCollapsed.value, [key]: !folderCollapsed.value[key] };
+}
+
+/** 在已有项目文件夹里继续开新任务：跳转首页并预填该工作目录（及最近一次使用的专家） */
+function newTaskInFolder(group: ProjectGroup): void {
+  closeProjectMenu();
+  if (folderCollapsed.value[group.key]) {
+    const next = { ...folderCollapsed.value };
+    delete next[group.key];
+    folderCollapsed.value = next;
+  }
+  const latest = group.tasks[0];
+  void router.push({
+    path: "/",
+    query: {
+      workspaceDir: group.path,
+      ...(latest?.agentId ? { agent: latest.agentId } : {}),
+    },
+  });
+}
+
+function viewProjectFiles(group: ProjectGroup): void {
+  closeProjectMenu();
+  const taskId = group.tasks[0]?.id;
+  if (!taskId) {
+    toast("error", "该项目下没有任务，无法浏览文件");
+    return;
+  }
+  void router.push(`/projects/${taskId}/files`);
+}
+
+async function openProjectFolder(group: ProjectGroup): Promise<void> {
+  closeProjectMenu();
+  if (window.agentOffice?.openPath) {
+    const res = await window.agentOffice.openPath(group.path);
+    if (!res.ok) toast("error", res.message || "打开失败");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(group.path);
+    toast("info", "当前环境无法直接打开文件夹，路径已复制");
+  } catch {
+    toast("info", `项目路径：${group.path}`);
+  }
+}
+
+async function copyProjectPath(group: ProjectGroup): Promise<void> {
+  closeProjectMenu();
+  try {
+    await navigator.clipboard.writeText(group.path);
+    toast("success", "路径已复制");
+  } catch {
+    toast("error", group.path);
+  }
+}
+
+/** 移除项目：取消侧栏归组，不删磁盘与任务 */
+async function removeProject(group: ProjectGroup): Promise<void> {
+  closeProjectMenu();
+  const ok = await confirmDialog({
+    title: `移除项目「${group.name}」？`,
+    message: "仅从侧栏项目列表移除，不会删除文件夹里的文件，也不会删除其中的任务（任务会回到「最近任务」）。",
+    confirmText: "移除项目",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const res = await detachProject(group.path);
+    toast("success", `已移除项目（${res.detached} 个任务）`);
+    await refreshRecent();
+  } catch (err) {
+    toastError(err, "移除项目失败");
+  }
+}
 
 async function logout(): Promise<void> {
   const ok = await confirmDialog({
@@ -98,49 +249,6 @@ async function logout(): Promise<void> {
   setToken("");
   setUsername("");
   void router.push("/login");
-}
-
-// ---------- 修改密码 ----------
-const pwdOpen = ref(false);
-const pwdNew = ref("");
-const pwdNew2 = ref("");
-const pwdError = ref("");
-const pwdBusy = ref(false);
-
-function openPwd(): void {
-  pwdNew.value = "";
-  pwdNew2.value = "";
-  pwdError.value = "";
-  pwdOpen.value = true;
-}
-
-async function submitPwd(): Promise<void> {
-  if (!pwdNew.value || !pwdNew2.value) {
-    pwdError.value = "请填写完整";
-    return;
-  }
-  if (pwdNew.value.length < 6) {
-    pwdError.value = "新密码至少 6 位";
-    return;
-  }
-  if (pwdNew.value !== pwdNew2.value) {
-    pwdError.value = "两次输入的新密码不一致";
-    return;
-  }
-  pwdBusy.value = true;
-  pwdError.value = "";
-  try {
-    await changePassword(pwdNew.value);
-    pwdOpen.value = false;
-    toast("success", "密码已修改，下次登录请使用新密码");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "";
-    if (msg.includes("too short")) pwdError.value = "新密码至少 6 位";
-    else if (/failed to fetch|networkerror|load failed/i.test(msg)) pwdError.value = "无法连接服务器";
-    else pwdError.value = "修改失败，请稍后重试";
-  } finally {
-    pwdBusy.value = false;
-  }
 }
 
 // ---------- WPS 365 账号（同步按钮跑服务端 user-current 脚本） ----------
@@ -252,7 +360,65 @@ async function submitWpsSync(): Promise<void> {
         </RouterLink>
       </nav>
 
-      <div v-if="recentTasks.length && !sidebarCollapsed" class="section">
+      <div v-if="!sidebarCollapsed" class="side-scroll">
+      <div v-if="folderGroups.length" class="section projects-section">
+        <div class="section-head">
+          <span>项目</span>
+        </div>
+        <div v-for="group in folderGroups" :key="group.key" class="project">
+          <div class="project-row-wrap">
+            <button
+              type="button"
+              class="project-row"
+              :title="group.path"
+              :aria-expanded="!folderCollapsed[group.key]"
+              @click="toggleFolder(group.key)"
+            >
+              <svg class="icon folder-ic" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
+              <span class="project-name">{{ group.name }}</span>
+            </button>
+            <div class="project-actions" @click.stop>
+              <button
+                type="button"
+                class="project-new"
+                title="在此项目新建任务"
+                @click="newTaskInFolder(group)"
+              >
+                <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+              </button>
+              <button
+                type="button"
+                class="project-more"
+                title="项目操作"
+                :aria-expanded="projectMenuKey === group.key"
+                @click="toggleProjectMenu(group.key, $event)"
+              >
+                <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="12" cy="19" r="1.4" /></svg>
+              </button>
+              <div v-if="projectMenuKey === group.key" class="project-menu">
+                <button type="button" @click="viewProjectFiles(group)">查看文件夹内容</button>
+                <button type="button" @click="openProjectFolder(group)">在资源管理器中打开</button>
+                <button type="button" @click="copyProjectPath(group)">复制路径</button>
+                <button type="button" class="danger" @click="removeProject(group)">移除项目</button>
+              </div>
+            </div>
+          </div>
+          <div v-if="!folderCollapsed[group.key]" class="project-tasks">
+            <RouterLink
+              v-for="t in group.tasks"
+              :key="t.id"
+              :to="`/tasks/${t.id}`"
+              class="project-chat"
+              active-class="current"
+              :title="t.title || '（无标题）'"
+            >
+              {{ t.title || "（无标题）" }}
+            </RouterLink>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="recentTasks.length" class="section">
         <div class="section-head">
           <span>最近任务</span>
           <span class="count">{{ recentTasks.length }}</span>
@@ -270,8 +436,8 @@ async function submitWpsSync(): Promise<void> {
         </RouterLink>
         <RouterLink to="/tasks" class="see-all">查看全部 →</RouterLink>
       </div>
-
-      <div class="spacer" />
+      </div>
+      <div v-else class="spacer" />
 
       <div class="user" :class="{ compact: sidebarCollapsed }">
         <button
@@ -310,14 +476,6 @@ async function submitWpsSync(): Promise<void> {
         >
           <svg class="icon" viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 1 0-.88-8.92 6 6 0 0 0-11.4 1.98A3.5 3.5 0 0 0 6 19z" /></svg>
         </button>
-        <button
-          class="icon-btn"
-          title="模型供应商"
-          aria-label="模型供应商"
-          @click="router.push('/models')"
-        >
-          <svg class="icon" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
-        </button>
         <button class="icon-btn danger-hover" title="退出登录" aria-label="退出登录" @click="logout">
           <svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
         </button>
@@ -331,32 +489,6 @@ async function submitWpsSync(): Promise<void> {
     <Toasts />
     <ConfirmHost />
 
-    <!-- 修改密码弹窗 -->
-    <div v-if="pwdOpen" class="overlay" @click.self="pwdOpen = false">
-      <form class="dialog" @submit.prevent="submitPwd">
-        <div class="dialog-head">
-          <h3>修改密码</h3>
-          <button type="button" class="icon-btn" title="关闭" @click="pwdOpen = false">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div class="dialog-body">
-          <label>
-            <span>新密码</span>
-            <input v-model="pwdNew" type="password" autocomplete="new-password" placeholder="至少 6 位" />
-          </label>
-          <label>
-            <span>确认新密码</span>
-            <input v-model="pwdNew2" type="password" autocomplete="new-password" placeholder="再输入一次" />
-          </label>
-          <p v-if="pwdError" class="pwd-err">{{ pwdError }}</p>
-        </div>
-        <div class="dialog-foot">
-          <button type="button" class="ghost" @click="pwdOpen = false">取消</button>
-          <button type="submit" class="primary" :disabled="pwdBusy">{{ pwdBusy ? "提交中…" : "确认修改" }}</button>
-        </div>
-      </form>
-    </div>
     <!-- 平台账号与当前用户自己的 WPS 365 信息 -->
     <div v-if="wpsOpen" class="overlay" @click.self="wpsOpen = false">
       <div class="dialog wps-dialog" role="dialog" aria-label="账号与 WPS 用户信息">
@@ -527,6 +659,14 @@ async function submitWpsSync(): Promise<void> {
   padding: 1px 7px;
   line-height: 1.5;
 }
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.side-scroll .section {
+  overflow: visible;
+}
 .section {
   margin-top: 22px;
   padding: 0 4px;
@@ -551,6 +691,178 @@ async function submitWpsSync(): Promise<void> {
   border-radius: 999px;
   font-size: 11px;
   padding: 0 7px;
+  font-weight: 600;
+}
+/* Codex 式项目树：文件夹 + 缩进会话标题，悬停出新建 */
+.projects-section {
+  gap: 2px;
+}
+.project {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 4px;
+}
+.project-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-radius: 7px;
+  min-height: 30px;
+}
+.project-row-wrap:hover {
+  background: var(--surface-2);
+}
+.project-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 4px 0 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.project-row:hover {
+  background: transparent;
+  border-color: transparent;
+}
+.project-row:active {
+  transform: none;
+}
+.project-row .folder-ic {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--text-3);
+}
+.project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: 2px;
+  opacity: 0;
+}
+.project-row-wrap:hover .project-actions,
+.project-actions:focus-within,
+.project-row-wrap:has(.project-menu) .project-actions {
+  opacity: 1;
+}
+.project-new,
+.project-more {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.project-new:hover,
+.project-more:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.project-new .icon {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.project-more .icon {
+  width: 14px;
+  height: 14px;
+}
+.project-more .icon circle {
+  fill: currentColor;
+  stroke: none;
+}
+.project-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+.project-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.project-menu button:hover {
+  background: var(--surface-2);
+}
+.project-menu button.danger {
+  color: var(--danger);
+}
+.project-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 1px 0 4px;
+}
+.project-chat {
+  display: block;
+  margin-left: 8px;
+  padding: 5px 10px 5px 22px;
+  border-radius: 7px;
+  text-decoration: none;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-chat:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.project-chat.current {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
   font-weight: 600;
 }
 .task-item {

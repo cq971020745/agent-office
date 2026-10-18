@@ -10,7 +10,13 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "office-packages-test-"));
 process.env.PI_OFFLINE = "1";
 
-const { declarePiPackage, findPackageSourceDir, installPiPackages, isPackageSynced } = await import("./packages.js");
+const {
+  declarePiPackage,
+  ensureWebSearchConfig,
+  findPackageSourceDir,
+  installPiPackages,
+  isPackageSynced,
+} = await import("./packages.js");
 const { paths } = await import("./config.js");
 const { DefaultResourceLoader, SessionManager, createAgentSession } = await import("@earendil-works/pi-coding-agent");
 
@@ -19,6 +25,12 @@ describe("findPackageSourceDir", () => {
     const found = findPackageSourceDir("office-suite", process.cwd());
     assert.ok(found, "应能定位 pi-packages/office-suite");
     assert.ok(fs.existsSync(path.join(found, "package.json")));
+  });
+
+  it("按 cwd 探测到仓库内的 document-ocr 包", () => {
+    const found = findPackageSourceDir("document-ocr", process.cwd());
+    assert.ok(found, "应能定位 pi-packages/document-ocr");
+    assert.ok(fs.existsSync(path.join(found, "extensions", "ocr-to-md.ts")));
   });
 
   it("环境变量目录缺包时回退到 cwd 探测", () => {
@@ -56,35 +68,63 @@ describe("declarePiPackage", () => {
   });
 });
 
+describe("ensureWebSearchConfig", () => {
+  it("缺省时写入 eager，已有文件不覆盖", () => {
+    const configPath = path.join(paths.agentDir, "web-search.json");
+    fs.rmSync(configPath, { force: true });
+    ensureWebSearchConfig();
+    const first = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    assert.equal(first.toolActivation, "eager");
+    fs.writeFileSync(configPath, `${JSON.stringify({ toolActivation: "dynamic", braveApiKey: "keep" }, null, 2)}\n`);
+    ensureWebSearchConfig();
+    const second = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    assert.equal(second.toolActivation, "dynamic");
+    assert.equal(second.braveApiKey, "keep");
+  });
+});
+
 describe("installPiPackages", () => {
   it("端到端：复制包到 agentDir 并写入声明，重复调用幂等", async () => {
     const result = installPiPackages();
     assert.deepEqual(result.skipped, []);
-    assert.equal(result.installed.length, 1);
-    const suite = result.installed[0]!;
-    assert.equal(suite.id, "office-suite");
+    assert.equal(result.installed.length, 2);
+    const suite = result.installed.find((pkg) => pkg.id === "office-suite")!;
+    const ocr = result.installed.find((pkg) => pkg.id === "document-ocr")!;
+    assert.ok(suite, "应安装 office-suite");
+    assert.ok(ocr, "应安装 document-ocr");
     assert.equal(suite.alreadySynced, false);
+    assert.equal(ocr.alreadySynced, false);
 
     const dest = path.join(paths.agentDir, "packages", "office-suite");
     assert.ok(fs.existsSync(path.join(dest, "package.json")));
     assert.ok(fs.existsSync(path.join(dest, "extensions", "todo-list.ts")));
+    assert.ok(fs.existsSync(path.join(paths.agentDir, "packages", "document-ocr", "extensions", "ocr-to-md.ts")));
     // prompts 已迁移为平台技能（skills.ts 播种），包内不应再有 prompts
     assert.ok(!fs.existsSync(path.join(dest, "prompts")));
     assert.equal(isPackageSynced(findPackageSourceDir("office-suite", process.cwd())!, dest), true);
 
     const settings = JSON.parse(fs.readFileSync(path.join(paths.agentDir, "settings.json"), "utf8"));
     const sources = settings.packages.map((pkg: { source: string }) => pkg.source).sort();
-    assert.deepEqual(sources, ["./packages/office-suite", "npm:pi-quiver@6.13.2"]);
+    assert.deepEqual(sources, [
+      "./packages/document-ocr",
+      "./packages/office-suite",
+      "npm:pi-quiver@6.13.2",
+      "npm:pi-web-access@0.42.0",
+    ]);
     const quiver = settings.packages.find((pkg: { source: string }) => pkg.source.startsWith("npm:pi-quiver"));
     assert.deepEqual(quiver.extensions, ["extensions/doc_to_md.ts"]);
     assert.deepEqual(quiver.skills, []);
     assert.deepEqual(quiver.prompts, []);
     assert.deepEqual(quiver.themes, []);
+    const webAccess = settings.packages.find((pkg: { source: string }) => pkg.source.startsWith("npm:pi-web-access"));
+    assert.ok(webAccess, "应声明 pi-web-access");
+    assert.equal(webAccess.source, "npm:pi-web-access@0.42.0");
+    assert.equal(webAccess.extensions, undefined);
 
     const again = installPiPackages();
-    assert.equal(again.installed[0]!.alreadySynced, true);
+    assert.ok(again.installed.every((pkg) => pkg.alreadySynced));
     const settingsAgain = JSON.parse(fs.readFileSync(path.join(paths.agentDir, "settings.json"), "utf8"));
-    assert.equal(settingsAgain.packages.length, 2, "重复安装不应产生重复声明");
+    assert.equal(settingsAgain.packages.length, 4, "重复安装不应产生重复声明");
   });
 
   it("目标被篡改后重装可修复", () => {
@@ -103,9 +143,11 @@ describe("installPiPackages", () => {
     const extensions = loader.getExtensions();
     assert.equal(extensions.errors.length, 0, `扩展加载报错: ${JSON.stringify(extensions.errors)}`);
     const names = extensions.extensions.map((e) => path.basename(e.path)).sort();
-    assert.deepEqual(names, ["todo-list.ts", "write-guard.ts"]);
+    assert.deepEqual(names, ["ocr-to-md.ts", "todo-list.ts", "write-guard.ts"]);
     const todo = extensions.extensions.find((e) => e.path.endsWith("todo-list.ts"))!;
     assert.ok(todo.tools.has("todo"), "todo 扩展应注册 todo 工具");
+    const ocrExt = extensions.extensions.find((e) => e.path.endsWith("ocr-to-md.ts"))!;
+    assert.ok(ocrExt.tools.has("ocr_to_md"), "document-ocr 扩展应注册 ocr_to_md 工具");
 
     assert.equal(loader.getPrompts().prompts.length, 0, "包不应再声明提示词模板");
   });
@@ -133,8 +175,9 @@ describe("installPiPackages", () => {
     try {
       const active = session.getActiveToolNames();
       assert.ok(active.includes("todo"), `todo 应在激活工具中，实际: ${JSON.stringify(active)}`);
+      assert.ok(active.includes("ocr_to_md"), `ocr_to_md 应在激活工具中，实际: ${JSON.stringify(active)}`);
       assert.ok(active.includes("workspace_list"));
-      assert.equal(active.length, 2, `内置工具不应被激活，实际: ${JSON.stringify(active)}`);
+      assert.equal(active.length, 3, `内置工具不应被激活，实际: ${JSON.stringify(active)}`);
     } finally {
       session.dispose();
     }

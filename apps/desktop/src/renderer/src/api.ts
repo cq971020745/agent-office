@@ -1,5 +1,6 @@
 // 后端 API 访问封装：token 存 localStorage，事件流走 EventSource(?token=)。
 import type {
+  AccessMode,
   AgentConfig,
   AgentPackInfo,
   AgentPackInstallResult,
@@ -31,6 +32,7 @@ import type {
   WpsMention,
   WpsMentionSearch,
   WpsProfile,
+  ProviderApiFormat,
 } from "@office/shared";
 import { toast } from "./composables/toast";
 
@@ -92,6 +94,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function fetchCaptcha() {
   return request<{ enabled: boolean; uuid: string; img: string }>("/auth/captcha");
+}
+
+/** 续期企业知识库访问凭证，避免工作台窗口自己落到知识库登录页。 */
+export function pingKbSession() {
+  return request<{ ok: true }>("/kb-embed/session");
+}
+
+export function fetchKbEmbedTicket() {
+  return request<{ ticket: string }>("/kb-embed/ticket");
 }
 
 export function login(username: string, password: string, code: string, uuid: string) {
@@ -160,7 +171,8 @@ export function createTask(
   title?: string,
   model?: { providerId: string; modelId: string },
   workspaceDir?: string,
-  mentions?: WpsMention[]
+  mentions?: WpsMention[],
+  accessMode?: AccessMode
 ) {
   return request<{ id: string }>("/tasks", {
     method: "POST",
@@ -171,6 +183,7 @@ export function createTask(
       ...model,
       workspaceDir: workspaceDir || undefined,
       mentions: mentions?.length ? mentions : undefined,
+      accessMode,
     }),
   });
 }
@@ -185,6 +198,7 @@ export function createTaskWithFiles(
     model?: { providerId: string; modelId: string };
     workspaceDir?: string;
     mentions?: WpsMention[];
+    accessMode?: AccessMode;
   } = {}
 ) {
   const form = new FormData();
@@ -198,8 +212,25 @@ export function createTaskWithFiles(
   }
   if (opts.workspaceDir) form.set("workspaceDir", opts.workspaceDir);
   if (opts.mentions?.length) form.set("mentions", JSON.stringify(opts.mentions));
+  if (opts.accessMode) form.set("accessMode", opts.accessMode);
   for (const f of files) form.append("files", f, f.name);
   return request<{ id: string }>("/tasks", { method: "POST", body: form });
+}
+
+/** 追问前改会话权限档位；下一跳工具闸门立即按新档位生效。 */
+export function updateTaskAccessMode(id: string, accessMode: AccessMode) {
+  return request<{ ok: true; accessMode: AccessMode }>(`/tasks/${id}/access-mode`, {
+    method: "PATCH",
+    body: JSON.stringify({ accessMode }),
+  });
+}
+
+/** 追问前切换本任务模型；下一轮生效。 */
+export function updateTaskModel(id: string, providerId: string, modelId: string) {
+  return request<{ ok: true; providerId: string; modelId: string; providerName: string }>(`/tasks/${id}/model`, {
+    method: "PATCH",
+    body: JSON.stringify({ providerId, modelId }),
+  });
 }
 
 /** 派发时可选的模型：启用供应商下的「可用模型」。 */
@@ -296,6 +327,14 @@ export function deleteTask(id: string) {
   return request<{ ok: true }>(`/tasks/${id}`, { method: "DELETE" });
 }
 
+/** 从侧栏「项目」移除：取消该工作目录下任务的项目归组，不删磁盘文件与任务记录。 */
+export function detachProject(workspaceDir: string) {
+  return request<{ ok: true; detached: number }>("/projects/detach", {
+    method: "POST",
+    body: JSON.stringify({ workspaceDir }),
+  });
+}
+
 export function getTaskMessages(taskId: string) {
   return request<TaskMessage[]>(`/tasks/${taskId}/messages`);
 }
@@ -331,9 +370,23 @@ export function listDeliverables(taskId: string) {
   return request<Deliverable[]>(`/tasks/${taskId}/deliverables`);
 }
 
-/** 斜杠技能候选（GET /skills，全体登录用户可见的 user-invocable 技能元数据，输入框 / 弹层数据源） */
-export function listSlashSkills() {
-  return request<SlashSkill[]>("/skills");
+export interface WorkspaceEntry {
+  name: string;
+  relPath: string;
+  folder: boolean;
+  size: number;
+}
+
+/** 列出任务工作区的一层目录。dir 为空时返回根目录。 */
+export function listWorkspace(taskId: string, dir = "") {
+  const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+  return request<{ dir: string; entries: WorkspaceEntry[]; truncated: boolean }>(`/tasks/${taskId}/workspace${q}`);
+}
+
+/** 斜杠技能候选。传入专家 id 时只返回该专家能用的技能。 */
+export function listSlashSkills(agentId = "") {
+  const q = agentId ? `?agentId=${encodeURIComponent(agentId)}` : "";
+  return request<SlashSkill[]>(`/skills${q}`);
 }
 
 export interface VoiceStatus {
@@ -401,6 +454,8 @@ export interface AdminProvider {
   baseUrl: string;
   enabled: boolean;
   hasKey: boolean;
+  /** 当前用户自己的密钥，供编辑弹窗回填；卡片上只展示「已配置/未配置」。 */
+  apiKey: string;
   models: string[];
   /** 已启用的可用模型（专家创建时只能从这里选）。 */
   enabledModels: string[];
@@ -409,6 +464,10 @@ export interface AdminProvider {
   modelOverrides: Record<string, ModelOverride>;
   /** 显式指定的语音转写（ASR）模型 ID（空表示自动探测） */
   asrModel: string;
+  /** 显式指定的扫描件 OCR 模型 ID（textin 或视觉模型；空表示使用开源 Tesseract.js） */
+  ocrModel: string;
+  /** 对话协议：Chat Completions / Anthropic Messages / Responses */
+  apiFormat: ProviderApiFormat;
 }
 
 /** 供应商模型两层列表的快照：models 为候选池，enabledModels 为可用集合。 */
@@ -421,8 +480,11 @@ export function listAdminProviders() {
   return request<AdminProvider[]>("/admin/providers");
 }
 
-export function createAdminProvider(name: string, baseUrl: string, apiKey: string) {
-  return request<{ id: string }>("/admin/providers", { method: "POST", body: JSON.stringify({ name, baseUrl, apiKey }) });
+export function createAdminProvider(name: string, baseUrl: string, apiKey: string, apiFormat?: ProviderApiFormat) {
+  return request<{ id: string }>("/admin/providers", {
+    method: "POST",
+    body: JSON.stringify({ name, baseUrl, apiKey, apiFormat }),
+  });
 }
 
 export function setProviderEnabled(id: string, enabled: boolean) {
@@ -438,6 +500,8 @@ export function updateAdminProvider(
     apiKey?: string;
     modelOverrides?: Record<string, ModelOverride>;
     asrModel?: string;
+    ocrModel?: string;
+    apiFormat?: ProviderApiFormat;
   }
 ) {
   return request<{ ok: true }>(`/admin/providers/${id}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -601,6 +665,14 @@ export function installSkill(source: string, overwrite: boolean) {
   });
 }
 
+/** 导入 zip 技能包（含 SKILL.md 的目录压缩包，不是专家包）。 */
+export function installSkillPack(file: File, overwrite: boolean) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const qs = overwrite ? "?overwrite=true" : "";
+  return request<SkillInstallResult>(`/admin/skills/install-pack${qs}`, { method: "POST", body: fd });
+}
+
 export function syncSkill(name: string) {
   return request<SkillInstallResult>(`/admin/skills/${encodeURIComponent(name)}/sync`, { method: "POST" });
 }
@@ -610,9 +682,20 @@ export function getSkillUpdates() {
   return request<SkillUpdateInfo[]>("/admin/skills/updates");
 }
 
-/** 一键同步全部技能源：每个来源同步一次，失败的来源在 failed 里说明。 */
+/** 一键同步全部技能源：先扫 ~/.agents/skills，再逐个同步已登记来源。 */
 export function syncAllSkills() {
-  return request<{ sources: string[]; failed: Array<{ source: string; error: string }> }>("/admin/skills/sync-all", {
+  return request<{
+    sources: string[];
+    failed: Array<{ source: string; error: string }>;
+    home: {
+      source: string;
+      added: string[];
+      updated: string[];
+      removed: string[];
+      skipped: string[];
+      missing: boolean;
+    };
+  }>("/admin/skills/sync-all", {
     method: "POST",
   });
 }

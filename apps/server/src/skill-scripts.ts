@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { SKILLS_DIR } from "./skills.js";
+import { SKILLS_DIR, skillDirectory } from "./skills.js";
 import { truncateForContext } from "./tools.js";
 
 const execFileAsync = promisify(execFile);
@@ -69,10 +69,12 @@ export async function runSkillScript(
   skill: string,
   script: string,
   args: string[] = [],
-  timeoutMs = MAX_TIMEOUT_MS
+  timeoutMs = MAX_TIMEOUT_MS,
+  agentId?: string
 ): Promise<SkillScriptResult> {
   if (!/^[\w\u4e00-\u9fa5-]{1,64}$/.test(skill)) throw new Error("技能名不合法");
-  const skillDir = path.join(SKILLS_DIR, skill);
+  const skillDir = agentId ? skillDirectory(agentId, skill) : path.join(SKILLS_DIR, skill);
+  if (!skillDir) throw new Error("技能不存在或不属于当前专家");
   const scriptAbs = path.resolve(skillDir, script);
   const rel = path.relative(path.resolve(skillDir), scriptAbs);
   if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("脚本路径必须位于技能目录内");
@@ -125,7 +127,7 @@ const RunParams = Type.Object({
 });
 
 /** run_skill_script：让专家在宿主机上运行技能自带脚本（wps365 等需要本机凭证与内网的能力） */
-export function skillScriptTool(): ToolDefinition<typeof RunParams> {
+export function skillScriptTool(agentId?: string): ToolDefinition<typeof RunParams> {
   return {
     name: "run_skill_script",
     label: "运行技能脚本",
@@ -141,7 +143,7 @@ export function skillScriptTool(): ToolDefinition<typeof RunParams> {
     execute: async (_id, params) => {
       const args = (params.args ?? []).map(String).slice(0, 64);
       try {
-        const res = await runSkillScript(params.skill, params.script, args);
+        const res = await runSkillScript(params.skill, params.script, args, MAX_TIMEOUT_MS, agentId);
         const text = `${res.stdout}${res.stderr ? (res.stdout ? "\n" : "") + res.stderr : ""}`.trim();
         return { content: [{ type: "text", text: truncateForContext(text) || "(no output)" }], details: undefined };
       } catch (err) {

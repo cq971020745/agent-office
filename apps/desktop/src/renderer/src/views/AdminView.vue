@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { isAsrModel } from "@office/shared";
+import {
+  DEFAULT_PROVIDER_API_FORMAT,
+  PROVIDER_API_FORMATS,
+  providerApiFormatShort,
+  isAsrModel,
+  isOcrModel,
+  isTextInOcrModel,
+  type ProviderApiFormat,
+} from "@office/shared";
 import type { AdminProvider, AdminUser, VoiceStatus } from "../api";
 import {
   addProviderModel,
@@ -117,13 +125,17 @@ async function handleWarmupLocal(): Promise<void> {
 const pName = ref("");
 const pBaseUrl = ref("");
 const pKey = ref("");
+const pKeyVisible = ref(false);
+const pApiFormat = ref<ProviderApiFormat>(DEFAULT_PROVIDER_API_FORMAT);
 
 async function addProvider(): Promise<void> {
   if (!pName.value.trim() || !pBaseUrl.value.trim() || !pKey.value) return;
   try {
-    await createAdminProvider(pName.value.trim(), pBaseUrl.value.trim(), pKey.value);
+    await createAdminProvider(pName.value.trim(), pBaseUrl.value.trim(), pKey.value, pApiFormat.value);
     toast("success", "供应商已添加，点击「获取模型列表」拉取可用模型");
     pName.value = pBaseUrl.value = pKey.value = "";
+    pApiFormat.value = DEFAULT_PROVIDER_API_FORMAT;
+    pKeyVisible.value = false;
     await refresh();
   } catch (err) {
     toastError(err, "添加供应商失败");
@@ -146,8 +158,12 @@ const eId = ref("");
 const eName = ref("");
 const eBaseUrl = ref("");
 const eKey = ref("");
+const eKeyVisible = ref(false);
 const eAsrModel = ref("");
+const eOcrModel = ref("");
+const eApiFormat = ref<ProviderApiFormat>(DEFAULT_PROVIDER_API_FORMAT);
 const ASR_PRESETS = ["FunAudioLLM/SenseVoiceSmall", "whisper-1", "glm-asr", "paraformer-v2"];
+const OCR_PRESETS = ["textin", "qwen-vl-max", "qwen-vl-plus", "gpt-4o", "glm-4v", "internvl-latest"];
 // 模型能力覆盖（P2-5）：JSON 文本，键为模型 ID；空 = 全部用平台默认（128k / 32768 / 无推理）
 const eOverrides = ref("");
 const OVERRIDES_EXAMPLE = `{
@@ -159,8 +175,11 @@ function openEdit(p: AdminProvider): void {
   eId.value = p.id;
   eName.value = p.name;
   eBaseUrl.value = p.baseUrl;
-  eKey.value = "";
+  eKey.value = p.apiKey ?? "";
+  eKeyVisible.value = false;
   eAsrModel.value = p.asrModel ?? "";
+  eOcrModel.value = p.ocrModel ?? "";
+  eApiFormat.value = p.apiFormat ?? DEFAULT_PROVIDER_API_FORMAT;
   const ov = p.modelOverrides ?? {};
   eOverrides.value = Object.keys(ov).length ? JSON.stringify(ov, null, 2) : "";
   showEdit.value = true;
@@ -190,6 +209,8 @@ async function saveEdit(): Promise<void> {
       apiKey: eKey.value,
       modelOverrides: modelOverrides as AdminProvider["modelOverrides"],
       asrModel: eAsrModel.value.trim(),
+      ocrModel: eOcrModel.value.trim(),
+      apiFormat: eApiFormat.value,
     });
     toast("success", "供应商已更新");
     showEdit.value = false;
@@ -208,6 +229,17 @@ async function setProviderAsrModel(p: AdminProvider, model: string): Promise<voi
     toast("success", next ? `已将「${next}」设为「${p.name}」的语音转写模型` : `已清除「${p.name}」的显式语音模型绑定`);
   } catch (err) {
     toastError(err, "设置语音转写模型失败");
+  }
+}
+
+async function setProviderOcrModel(p: AdminProvider, model: string): Promise<void> {
+  const next = p.ocrModel === model ? "" : model;
+  try {
+    await updateAdminProvider(p.id, { ocrModel: next });
+    p.ocrModel = next;
+    toast("success", next ? `已将「${next}」设为「${p.name}」的 OCR 模型` : `已清除「${p.name}」的 OCR 模型绑定`);
+  } catch (err) {
+    toastError(err, "设置 OCR 模型失败");
   }
 }
 
@@ -409,15 +441,20 @@ onMounted(refresh);
               <span v-if="p.asrModel" class="asr-badge" title="语音听写与音频转写优先使用该模型（点击清除）" @click="setProviderAsrModel(p, p.asrModel)">
                 🎙️ 语音：{{ p.asrModel }} ✕
               </span>
+              <span v-if="p.ocrModel" class="asr-badge" title="扫描件 OCR 优先使用该模型（点击清除）" @click="setProviderOcrModel(p, p.ocrModel)">
+                📄 OCR：{{ p.ocrModel }} ✕
+              </span>
             </div>
             <div class="p-actions">
-              <button type="button" @click="openEdit(p)">编辑 / 语音配置</button>
+              <button type="button" @click="openEdit(p)">编辑 / 语音与 OCR</button>
               <button type="button" @click="toggleProvider(p)">{{ p.enabled ? "停用" : "启用" }}</button>
               <button type="button" class="danger" @click="removeProvider(p)">删除</button>
             </div>
           </div>
           <div class="p-url">
             <span class="mono">{{ p.baseUrl }}</span>
+            <span class="dot-sep">·</span>
+            {{ providerApiFormatShort(p.apiFormat) }}
             <span class="dot-sep">·</span>
             密钥{{ p.hasKey ? "已配置" : "未配置" }}
           </div>
@@ -442,7 +479,7 @@ onMounted(refresh);
                   <span class="m-tip">创建专家时可选</span>
                 </div>
                 <div v-if="p.enabledModels.length" class="model-list">
-                  <span v-for="m in enabledFiltered(p)" :key="m" class="model-pill on" :class="{ asr: p.asrModel === m }">
+                  <span v-for="m in enabledFiltered(p)" :key="m" class="model-pill on" :class="{ asr: p.asrModel === m, ocr: p.ocrModel === m }">
                     <button
                       v-if="isAsrModel(m)"
                       type="button"
@@ -450,6 +487,13 @@ onMounted(refresh);
                       :title="p.asrModel === m ? '当前默认语音转写模型（点击取消绑定）' : '设为该供应商默认语音转写（ASR）模型'"
                       @click="setProviderAsrModel(p, m)"
                     >🎙️</button>
+                    <button
+                      v-if="isOcrModel(m)"
+                      type="button"
+                      class="pill-asr"
+                      :title="p.ocrModel === m ? '当前默认扫描件 OCR 模型（点击取消绑定）' : isTextInOcrModel(m) ? '设为该供应商默认 TextIn OCR 模型' : '设为该供应商默认扫描件 OCR 视觉模型'"
+                      @click="setProviderOcrModel(p, m)"
+                    >📄</button>
                     {{ m }}
                     <button type="button" class="pill-x" title="停用（保留在候选）" @click="disableModel(p, m)">×</button>
                   </span>
@@ -460,10 +504,10 @@ onMounted(refresh);
               <div v-if="candidateModels(p).length" class="m-block">
                 <div class="m-label">
                   候选模型 <span class="m-count">{{ candidateModels(p).length }}</span>
-                  <span class="m-tip">点击直接添加为可用；带 🎙️ 图标的可直接设为语音转写模型</span>
+                  <span class="m-tip">点击直接添加为可用；🎙️ 可设为语音转写，📄 可设为扫描件 OCR</span>
                 </div>
                 <div class="model-list">
-                  <span v-for="m in candidatesFiltered(p)" :key="m" class="model-pill cand" :class="{ asr: p.asrModel === m }">
+                  <span v-for="m in candidatesFiltered(p)" :key="m" class="model-pill cand" :class="{ asr: p.asrModel === m, ocr: p.ocrModel === m }">
                     <button
                       v-if="isAsrModel(m)"
                       type="button"
@@ -471,6 +515,13 @@ onMounted(refresh);
                       :title="p.asrModel === m ? '当前默认语音转写模型（点击取消绑定）' : '设为该供应商默认语音转写（ASR）模型'"
                       @click="setProviderAsrModel(p, m)"
                     >🎙️</button>
+                    <button
+                      v-if="isOcrModel(m)"
+                      type="button"
+                      class="pill-asr"
+                      :title="p.ocrModel === m ? '当前默认扫描件 OCR 模型（点击取消绑定）' : isTextInOcrModel(m) ? '设为该供应商默认 TextIn OCR 模型' : '设为该供应商默认扫描件 OCR 视觉模型'"
+                      @click="setProviderOcrModel(p, m)"
+                    >📄</button>
                     <button type="button" class="pill-add" title="添加为可用模型" @click="enableModel(p, m)">
                       + {{ m }}
                     </button>
@@ -497,10 +548,40 @@ onMounted(refresh);
       <form class="grid" @submit.prevent="addProvider">
         <input v-model="pName" placeholder="名称，如 DeepSeek 中转" required />
         <input v-model="pBaseUrl" placeholder="Base URL，如 https://api.deepseek.com/v1" required />
-        <input v-model="pKey" type="password" placeholder="API Key" required />
+        <select v-model="pApiFormat" :title="'对话协议'">
+          <option v-for="fmt in PROVIDER_API_FORMATS" :key="fmt.id" :value="fmt.id">{{ fmt.label }}</option>
+        </select>
+        <div class="pwd-box">
+          <input
+            v-model="pKey"
+            :type="pKeyVisible ? 'text' : 'password'"
+            placeholder="API Key"
+            autocomplete="off"
+            required
+          />
+          <button
+            type="button"
+            class="pwd-eye"
+            :title="pKeyVisible ? '隐藏密钥' : '显示密钥'"
+            :aria-label="pKeyVisible ? '隐藏密钥' : '显示密钥'"
+            :aria-pressed="pKeyVisible"
+            @click="pKeyVisible = !pKeyVisible"
+          >
+            <svg v-if="pKeyVisible" class="icon" viewBox="0 0 24 24">
+              <path d="M3 3l18 18" />
+              <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+              <path d="M9.9 5.1A10.8 10.8 0 0 1 12 5c5.5 0 9.5 4.2 10.5 7-1 2.7-3.2 5-6.1 6.3" />
+              <path d="M6.1 6.1C3.9 7.6 2.3 9.7 1.5 12c1 2.8 5 7 10.5 7 1.3 0 2.5-.2 3.6-.7" />
+            </svg>
+            <svg v-else class="icon" viewBox="0 0 24 24">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+        </div>
         <button class="primary" type="submit">添加供应商</button>
       </form>
-      <p class="hint">兼容 OpenAI Chat Completions 协议的任意端点均可；添加后可拉取该供应商下的模型列表。</p>
+      <p class="hint">对话协议可选 Chat Completions、Anthropic Messages 或 Responses；Base URL 按供应商实际地址填写，拉取列表只请求 <code>{baseUrl}/models</code>，不会自动补 <code>/v1</code>。登录后会自动加入「TextIn OCR」供应商（模型 ID <code>textin</code>），默认作为扫描件 OCR，可改地址、密钥或停用。</p>
     </template>
 
     <!-- 用户自行注册；管理端只保留账号查看与密码重置 -->
@@ -566,8 +647,41 @@ onMounted(refresh);
               <input v-model="eBaseUrl" placeholder="https://api.deepseek.com/v1" required />
             </label>
             <label class="field">
+              <span>API 格式</span>
+              <select v-model="eApiFormat">
+                <option v-for="fmt in PROVIDER_API_FORMATS" :key="fmt.id" :value="fmt.id">{{ fmt.label }}</option>
+              </select>
+            </label>
+            <label class="field">
               <span>API Key</span>
-              <input v-model="eKey" type="password" placeholder="留空则不修改" />
+              <div class="pwd-box">
+                <input
+                  v-model="eKey"
+                  :type="eKeyVisible ? 'text' : 'password'"
+                  :placeholder="eKey ? '' : '未配置，填写后保存'"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button
+                  type="button"
+                  class="pwd-eye"
+                  :title="eKeyVisible ? '隐藏密钥' : '显示密钥'"
+                  :aria-label="eKeyVisible ? '隐藏密钥' : '显示密钥'"
+                  :aria-pressed="eKeyVisible"
+                  @click="eKeyVisible = !eKeyVisible"
+                >
+                  <svg v-if="eKeyVisible" class="icon" viewBox="0 0 24 24">
+                    <path d="M3 3l18 18" />
+                    <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+                    <path d="M9.9 5.1A10.8 10.8 0 0 1 12 5c5.5 0 9.5 4.2 10.5 7-1 2.7-3.2 5-6.1 6.3" />
+                    <path d="M6.1 6.1C3.9 7.6 2.3 9.7 1.5 12c1 2.8 5 7 10.5 7 1.3 0 2.5-.2 3.6-.7" />
+                  </svg>
+                  <svg v-else class="icon" viewBox="0 0 24 24">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+              </div>
             </label>
             <label class="field">
               <span>语音转写（ASR）模型（可选）</span>
@@ -587,6 +701,26 @@ onMounted(refresh);
               </div>
               <span class="field-note">
                 必须显式指定才会调用该供应商的 <code>/audio/transcriptions</code> 端点（不会盲猜未配置的模型）；留空时将自动使用平台内置开源本地 Whisper ONNX 模型离线兜底。
+              </span>
+            </label>
+            <label class="field">
+              <span>扫描件 OCR 模型（可选）</span>
+              <input v-model="eOcrModel" placeholder="如 textin、qwen-vl-max、gpt-4o；留空则用开源 Tesseract.js" />
+              <div class="asr-presets">
+                <span class="preset-label">常用预设：</span>
+                <button
+                  v-for="preset in OCR_PRESETS"
+                  :key="preset"
+                  type="button"
+                  class="preset-chip"
+                  :class="{ active: eOcrModel === preset }"
+                  @click="eOcrModel = eOcrModel === preset ? '' : preset"
+                >
+                  {{ preset }}
+                </button>
+              </div>
+              <span class="field-note">
+                绑定 <code>textin</code> 时走合合 TextIn 文档解析（地址和密钥用该供应商的 Base URL / API Key）。绑定其他模型时走该供应商的多模态接口。留空则使用开源 Tesseract.js。可用环境变量 <code>TEXT_IN_BASE_URL</code>、<code>TEXT_IN_API_KEY</code> 覆盖默认 TextIn 接入。
               </span>
             </label>
             <label class="field">
@@ -983,6 +1117,8 @@ onMounted(refresh);
 }
 .dialog {
   width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   background: var(--surface);
   border-radius: 18px;
   box-shadow: var(--shadow-pop);
@@ -1036,6 +1172,46 @@ onMounted(refresh);
 .ghost {
   background: transparent;
 }
+.pwd-box {
+  position: relative;
+  width: 100%;
+}
+.pwd-box input {
+  padding-right: 40px;
+}
+.pwd-eye {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+}
+.pwd-eye:hover {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+.pwd-eye:active {
+  transform: none;
+}
+.pwd-eye .icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .overrides-editor {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 12.5px;
@@ -1059,7 +1235,8 @@ onMounted(refresh);
 .asr-badge:hover {
   opacity: 0.85;
 }
-.model-pill.asr {
+.model-pill.asr,
+.model-pill.ocr {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-border);
 }

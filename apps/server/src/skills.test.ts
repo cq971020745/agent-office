@@ -19,6 +19,7 @@ const {
   readSkillResource,
   setAgentSkillBinding,
   updateSkill,
+  writeSkillTool,
 } = await import("./skills.js");
 const { db, migrate } = await import("./db.js");
 migrate();
@@ -51,6 +52,20 @@ describe("parseSkillMd", () => {
     const parsed = parseSkillMd('---\nname: "quoted"\ndescription: \'single\'\n---\nx');
     assert.equal(parsed.name, "quoted");
     assert.equal(parsed.description, "single");
+  });
+
+  it("解析 description: > / >- 多行块标量，而不是留下裸的 >", () => {
+    const folded = parseSkillMd(
+      "---\nname: agent-reach\ndescription: >\n  MUST USE when researching\n  on the internet.\n\n  Also for URLs.\nmetadata:\n  homepage: https://example.com\n---\n# body\n"
+    );
+    assert.equal(folded.description, "MUST USE when researching on the internet. Also for URLs.");
+    assert.match(folded.body, /^# body/);
+
+    const strip = parseSkillMd(
+      "---\nname: skill-creator\ndescription: >-\n  对话创建技能。\n  先确认用途再落盘。\nargument-hint: [用途]\n---\nbody"
+    );
+    assert.equal(strip.description, "对话创建技能。 先确认用途再落盘。");
+    assert.equal(strip.argumentHint, "[用途]");
   });
 
   it("解析扩展字段：argument-hint / user-invocable / alias / metadata / allowed-tools", () => {
@@ -236,5 +251,54 @@ describe("专家技能绑定（agent_skills）", () => {
 
     deleteSkill("绑定技能A");
     deleteSkill("绑定技能B");
+  });
+});
+
+describe("write_skill 工具", () => {
+  const run = (params: Record<string, unknown>) => {
+    const tool = writeSkillTool();
+    const execute = tool.execute as (id: string, params: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }>;
+    return execute("t", params);
+  };
+
+  it("写入技能库并支持附属文件；同名默认拒绝", async () => {
+    const res = await run({
+      name: "对话技能",
+      description: "用对话写入的技能，用户提到对话创建时使用",
+      content: "# 对话技能\n\n按步骤做。",
+      files: [{ path: "references/note.md", content: "附注" }],
+    });
+    assert.match(res.content[0]?.text ?? "", /created skill 对话技能/);
+    assert.ok(getSkill("对话技能")?.content.includes("按步骤做"));
+    assert.match(
+      fs.readFileSync(path.join(process.env.DATA_DIR!, "agent", "skills", "对话技能", "references", "note.md"), "utf8"),
+      /附注/,
+    );
+    await assert.rejects(
+      () => run({ name: "对话技能", description: "d", content: "x" }),
+      /已存在/,
+    );
+    await run({
+      name: "对话技能",
+      description: "覆盖后的描述，用户提到覆盖时使用",
+      content: "新正文",
+      overwrite: true,
+    });
+    assert.match(getSkill("对话技能")!.content, /新正文/);
+    deleteSkill("对话技能");
+  });
+
+  it("拒绝逃出技能目录的附属路径", async () => {
+    await assert.rejects(
+      () =>
+        run({
+          name: "坏路径技能",
+          description: "d 用于测试路径",
+          content: "body",
+          files: [{ path: "../evil.md", content: "x" }],
+        }),
+      /escapes|附属文件/,
+    );
+    assert.equal(getSkill("坏路径技能"), undefined);
   });
 });

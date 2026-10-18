@@ -6,6 +6,7 @@ import ExpertsView from "./views/ExpertsView.vue";
 import HomeView from "./views/HomeView.vue";
 import KnowledgeView from "./views/KnowledgeView.vue";
 import LoginView from "./views/LoginView.vue";
+import ProjectFilesView from "./views/ProjectFilesView.vue";
 import TasksView from "./views/TasksView.vue";
 import TaskDetailView from "./views/TaskDetailView.vue";
 
@@ -18,6 +19,7 @@ export const router = createRouter({
     { path: "/experts/:id", component: ExpertDetailView },
     { path: "/tasks", component: TasksView },
     { path: "/tasks/:id", component: TaskDetailView },
+    { path: "/projects/:taskId/files", component: ProjectFilesView },
     { path: "/kb", component: KnowledgeView },
     { path: "/models", component: AdminView },
     { path: "/admin", component: AdminView },

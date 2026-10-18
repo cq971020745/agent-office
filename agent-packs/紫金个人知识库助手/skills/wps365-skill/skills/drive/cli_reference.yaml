@@ -1,0 +1,589 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: drive
+run_py: skills/drive/run.py
+schema_version: cli_reference.v1
+subcommands:
+  ai-search:
+    usage: run.py ai-search [-h]
+    positional:
+    - keyword
+    options:
+    - --drive-ids
+    - --exclude-file-exts
+    - --file-exts
+    - --no-total
+    - --page-size
+    - --page-token
+    - --parent-ids
+    - --recall-strategy
+    - --scopes
+    - --with-drive
+    - --with-permission
+    example: python skills/drive/run.py ai-search <keyword>
+    reject_options:
+    - --keyword
+  comment-create:
+    usage: run.py comment-create [-h] --content CONTENT [--origin-id ORIGIN_ID]
+    positional:
+    - file_id
+    options:
+    - --confirm
+    - --content
+    - --origin-id
+    - --reply-id
+    example: python skills/drive/run.py comment-create <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  comment-delete:
+    usage: run.py comment-delete [-h] [--confirm] [file_id] [comment_id]
+    positional:
+    - file_id
+    - comment_id
+    options:
+    - --confirm
+    example: python skills/drive/run.py comment-delete <file_id> <comment_id>
+    reject_options:
+    - --comment-id
+    - --comment_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  comment-list:
+    usage: run.py comment-list [-h] [--origin-id ORIGIN_ID]
+    positional:
+    - file_id
+    options:
+    - --origin-id
+    - --page-size
+    - --page-token
+    example: python skills/drive/run.py comment-list <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  comment-update:
+    usage: run.py comment-update [-h] --content CONTENT [--confirm]
+    positional:
+    - file_id
+    - comment_id
+    options:
+    - --confirm
+    - --content
+    example: python skills/drive/run.py comment-update <file_id> <comment_id>
+    reject_options:
+    - --comment-id
+    - --comment_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  create:
+    usage: run.py create [-h] [--drive DRIVE] [--parent-id PARENT_ID]
+    positional:
+    - file_name
+    options:
+    - --confirm
+    - --drive
+    - --file-id
+    - --file-type
+    - --on-conflict
+    - --parent-id
+    - --path
+    example: python skills/drive/run.py create <file_name>
+    reject_options:
+    - --file-name
+    - --file_name
+  deleted-list:
+    usage: run.py deleted-list [-h] [--drive-id DRIVE_ID] [--with-ext-attrs]
+    positional: []
+    options:
+    - --drive-id
+    - --page-size
+    - --page-token
+    - --with-drive
+    - --with-ext-attrs
+    example: python skills/drive/run.py deleted-list
+    reject_options: []
+  deleted-restore:
+    usage: run.py deleted-restore [-h] [file_id]
+    positional:
+    - file_id
+    options: []
+    example: python skills/drive/run.py deleted-restore <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  doclib-meta:
+    usage: run.py doclib-meta [-h] [--json] [drive_id]
+    positional:
+    - drive_id
+    options:
+    - --json
+    example: python skills/drive/run.py doclib-meta <drive_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  doclibs:
+    usage: run.py doclibs [-h] [--page-size PAGE_SIZE] [--page-token PAGE_TOKEN]
+    positional: []
+    options:
+    - --json
+    - --page-size
+    - --page-token
+    - --user-role
+    example: python skills/drive/run.py doclibs
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  download:
+    usage: run.py download [-h] [--dir DIR] [--drive DRIVE] [file_id]
+    positional:
+    - file_id
+    options:
+    - --dir
+    - --drive
+    example: python skills/drive/run.py download <file_id>
+    reject_options:
+    - --file-id
+    - --file_id
+  file-check-name:
+    usage: run.py file-check-name [-h] --name NAME drive_id parent_id
+    positional:
+    - drive_id
+    - parent_id
+    options:
+    - --name
+    example: python skills/drive/run.py file-check-name <drive_id> <parent_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --parent-id
+    - --parent_id
+  file-close-link:
+    usage: run.py file-close-link [-h] [--mode {pause,delete}] [--confirm]
+    positional:
+    - drive_id
+    - file_id
+    options:
+    - --confirm
+    - --mode
+    example: python skills/drive/run.py file-close-link <drive_id> <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  file-copy:
+    usage: run.py file-copy [-h] --dst-drive-id DST_DRIVE_ID --dst-parent-id
+    positional:
+    - drive_id
+    - file_id
+    options:
+    - --confirm
+    - --dst-drive-id
+    - --dst-parent-id
+    - --secure-type
+    example: python skills/drive/run.py file-copy <drive_id> <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  file-delete:
+    usage: run.py file-delete [-h] [--confirm] drive_id file_id
+    positional:
+    - drive_id
+    - file_id
+    options:
+    - --confirm
+    example: python skills/drive/run.py file-delete <drive_id> <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  file-move:
+    usage: run.py file-move [-h] --dst-drive-id DST_DRIVE_ID --dst-parent-id
+    positional:
+    - drive_id
+    - file_id
+    options:
+    - --confirm
+    - --dst-drive-id
+    - --dst-parent-id
+    - --secure-type
+    example: python skills/drive/run.py file-move <drive_id> <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  file-open-link:
+    usage: run.py file-open-link [-h] [--role-id ROLE_ID] [--scope SCOPE]
+    positional:
+    - drive_id
+    - file_id
+    options:
+    - --confirm
+    - --opts-json
+    - --role-id
+    - --scope
+    example: python skills/drive/run.py file-open-link <drive_id> <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  file-rename:
+    usage: run.py file-rename [-h] --dst-name DST_NAME [--confirm]
+    positional:
+    - drive_id
+    - file_id
+    options:
+    - --confirm
+    - --dst-name
+    example: python skills/drive/run.py file-rename <drive_id> <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  file-save-as:
+    usage: run.py file-save-as [-h] --dst-drive-id DST_DRIVE_ID --dst-parent-id
+    positional:
+    - drive_id
+    - file_id
+    options:
+    - --confirm
+    - --dst-drive-id
+    - --dst-parent-id
+    - --name
+    - --on-name-conflict
+    example: python skills/drive/run.py file-save-as <drive_id> <file_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-id
+    - --file_id
+  file-version-diff:
+    usage: run.py file-version-diff [-h] [--drive DRIVE]
+    positional:
+    - file_id
+    - version_a
+    - version_b
+    options:
+    - --drive
+    example: python skills/drive/run.py file-version-diff <file_id> <version_a> <version_b>
+    reject_options:
+    - --file-id
+    - --file_id
+    - --version-a
+    - --version-b
+    - --version_a
+    - --version_b
+  file-versions:
+    usage: run.py file-versions [-h] [--drive DRIVE] [--page-size PAGE_SIZE]
+    positional:
+    - file_id
+    options:
+    - --drive
+    - --page-size
+    - --page-token
+    - --with-comment
+    - --with-ext-attrs
+    - --without-comment
+    example: python skills/drive/run.py file-versions <file_id>
+    reject_options:
+    - --file-id
+    - --file_id
+  get:
+    usage: run.py get [-h] [--drive DRIVE] [file_id]
+    positional:
+    - file_id
+    options:
+    - --drive
+    example: python skills/drive/run.py get <file_id>
+    reject_options:
+    - --file-id
+    - --file_id
+  get-file-content:
+    usage: run.py get-file-content [-h] [--drive DRIVE]
+    positional:
+    - file_id
+    options:
+    - --component-file-id
+    - --convert-options
+    - --drive
+    - --extract-mode
+    - --format
+    - --include-elements
+    - --include-raw
+    - --json
+    - --output-file
+    - --raw
+    - --type
+    - --workbook-range
+    example: python skills/drive/run.py get-file-content <file_id>
+    reject_options:
+    - --file-id
+    - --file_id
+  latest:
+    usage: run.py latest [-h] [--page-size PAGE_SIZE] [--page-token PAGE_TOKEN]
+    positional: []
+    options:
+    - --exclude-creators
+    - --exclude-exts
+    - --include-creators
+    - --include-exts
+    - --page-size
+    - --page-token
+    - --with-link
+    - --with-permission
+    example: python skills/drive/run.py latest
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  link-meta:
+    usage: run.py link-meta [-h] [link_id]
+    positional:
+    - link_id
+    options: []
+    example: python skills/drive/run.py link-meta <link_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --link-id
+    - --link_id
+  list:
+    usage: run.py list [-h] [--drive DRIVE] [--parent PARENT]
+    positional: []
+    options:
+    - --all
+    - --drive
+    - --page-size
+    - --page-token
+    - --parent
+    example: python skills/drive/run.py list
+    reject_options: []
+  search:
+    usage: run.py search [-h] [--type {file_name,content,all}] [--scope SCOPE]
+    positional:
+    - keyword
+    options:
+    - --creator-ids
+    - --drive-ids
+    - --end-time
+    - --exclude-file-exts
+    - --file-exts
+    - --file-type
+    - --no-total
+    - --order
+    - --order-by
+    - --page-size
+    - --page-token
+    - --parent-ids
+    - --scope
+    - --start-time
+    - --time-type
+    - --type
+    example: python skills/drive/run.py search <keyword>
+    reject_options:
+    - --keyword
+  star:
+    usage: run.py star [-h] [--page-size PAGE_SIZE] [--page-token PAGE_TOKEN]
+    positional: []
+    options:
+    - --exclude-exts
+    - --include-exts
+    - --order
+    - --order-by
+    - --page-size
+    - --page-token
+    - --with-link
+    - --with-permission
+    example: python skills/drive/run.py star
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  star-add-items:
+    usage: run.py star-add-items [-h] [--objects OBJECTS]
+    positional: []
+    options:
+    - --items-json
+    - --objects
+    - --objects-json
+    example: python skills/drive/run.py star-add-items
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  star-remove-items:
+    usage: run.py star-remove-items [-h] [--objects OBJECTS]
+    positional: []
+    options:
+    - --item-ids
+    - --objects
+    - --objects-json
+    example: python skills/drive/run.py star-remove-items
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  tag-add-objects:
+    usage: run.py tag-add-objects [-h] [--objects OBJECTS]
+    positional:
+    - label_id
+    options:
+    - --objects
+    - --objects-json
+    example: python skills/drive/run.py tag-add-objects <label_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --label-id
+    - --label_id
+  tag-create:
+    usage: run.py tag-create [-h] --name NAME [--allotee-type {user,group,app}]
+    positional: []
+    options:
+    - --allotee-id
+    - --allotee-type
+    - --attr
+    - --label-type
+    - --name
+    - --rank
+    example: python skills/drive/run.py tag-create
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  tag-get:
+    usage: run.py tag-get [-h] [label_id]
+    positional:
+    - label_id
+    options: []
+    example: python skills/drive/run.py tag-get <label_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --label-id
+    - --label_id
+  tag-objects:
+    usage: run.py tag-objects [-h] [--page-size PAGE_SIZE]
+    positional:
+    - label_id
+    options:
+    - --exclude-exts
+    - --file-type
+    - --include-exts
+    - --no-resolve-meta
+    - --page-size
+    - --page-token
+    example: python skills/drive/run.py tag-objects <label_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --label-id
+    - --label_id
+  tag-remove-objects:
+    usage: run.py tag-remove-objects [-h] [--objects OBJECTS]
+    positional:
+    - label_id
+    options:
+    - --objects
+    - --objects-json
+    example: python skills/drive/run.py tag-remove-objects <label_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --label-id
+    - --label_id
+  tags:
+    usage: run.py tags [-h] [--allotee-type {user,group,app}]
+    positional: []
+    options:
+    - --allotee-id
+    - --allotee-type
+    - --label-type
+    - --page-size
+    - --page-token
+    example: python skills/drive/run.py tags
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  update:
+    usage: run.py update [-h] [--drive DRIVE] [--confirm] file_id file_path
+    positional:
+    - file_id
+    - file_path
+    options:
+    - --confirm
+    - --drive
+    example: python skills/drive/run.py update <file_id> <file_path>
+    reject_options:
+    - --file-id
+    - --file-path
+    - --file_id
+    - --file_path
+  upload:
+    usage: run.py upload [-h] [--filename FILENAME] [--drive DRIVE]
+    positional:
+    - file_path
+    options:
+    - --confirm
+    - --drive
+    - --filename
+    - --parent
+    - --path
+    example: python skills/drive/run.py upload <file_path>
+    reject_options:
+    - --file-path
+    - --file_path
+  write:
+    usage: run.py write [-h] [--content CONTENT] [--file FILE] [--title TITLE]
+    positional:
+    - file_id
+    options:
+    - --confirm
+    - --content
+    - --drive
+    - --file
+    - --json
+    - --mode
+    - --template
+    - --title
+    example: python skills/drive/run.py write <file_id>
+    reject_options:
+    - --file-id
+    - --file_id

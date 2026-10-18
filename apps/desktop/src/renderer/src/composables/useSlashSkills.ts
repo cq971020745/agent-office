@@ -15,13 +15,15 @@ export interface UseSlashOptions {
   prompt: Ref<string>;
   /** 输入框元素，用于定位 /token 与替换 */
   taRef: Ref<HTMLTextAreaElement | null>;
+  /** 当前专家。传入后只列出该专家能用的技能，不含其他专家包里的技能。 */
+  agentId?: Ref<string>;
 }
 
 /** /token 须紧随行首或空白符，避免匹配 URL 里的路径段 */
 const SLASH_RE = /(^|\s)\/([\w\u4e00-\u9fa5-]{0,64})$/;
 
 /**
- * 输入框 / 斜杠技能：键入 `/` 弹出技能候选（数据来自 GET /skills，仅 user-invocable），
+ * 输入框 / 斜杠技能：键入 `/` 弹出当前可用技能候选（数据来自 GET /skills），
  * ↑↓/Enter/Escape 键选，选中把 /token 替换为 /技能名（服务端 expandSkillSlash 展开执行）。
  * HomeView 与 TaskDetailView 的输入框共用；与 @ 弹层互斥（检测正则不相交）。
  */
@@ -31,13 +33,17 @@ export function useSlashSkills(opts: UseSlashOptions) {
   const listMax = ref(320);
   const popStyle = computed(() => ({ "--slash-list-max": `${listMax.value}px` }));
 
-  // 懒加载一次：失败后下次再打开弹层会重试
+  let loadedFor: string | null = null;
+
+  // 按当前专家加载；换专家后重新拉。失败不记缓存，下次打开再试。
   async function ensureSkills(): Promise<void> {
-    if (skills.value.length || state.loading) return;
+    const id = opts.agentId?.value ?? "";
+    if (loadedFor === id || state.loading) return;
     state.loading = true;
     try {
-      skills.value = await listSlashSkills();
-      state.hint = skills.value.length ? "" : "暂无可调用的技能，管理员可在「专家与技能」里创建";
+      skills.value = await listSlashSkills(id);
+      loadedFor = id;
+      state.hint = skills.value.length ? "" : "暂无技能，可在「专家·技能·连接器」里安装或同步";
     } catch {
       state.hint = "技能列表加载失败，请稍后重试";
     } finally {

@@ -33,6 +33,16 @@ interface KbEnvelope {
   data?: unknown;
 }
 
+/** 企业知识库访问凭证失效（HTTP 200 + code 401 是 RuoYi 的常见写法）。 */
+export class KbAuthError extends Error {
+  readonly code: number;
+  constructor(message: string, code = 401) {
+    super(message);
+    this.name = "KbAuthError";
+    this.code = code;
+  }
+}
+
 function aesKey(): Buffer {
   // 与知识库前端一致：32 个十六进制字符，按 UTF-8 当作 AES-256 密钥
   return Buffer.from(crypto.randomBytes(32).toString("hex").slice(0, 32), "utf8");
@@ -59,7 +69,9 @@ async function kbFetch(path: string, init: RequestInit = {}): Promise<KbEnvelope
     throw new Error(text.slice(0, 200) || `知识库返回了无法解析的响应（HTTP ${res.status}）`);
   }
   if (body.code !== undefined && body.code !== 200) {
-    throw new Error(body.msg || `知识库请求失败（${body.code}）`);
+    const message = body.msg || `知识库请求失败（${body.code}）`;
+    if (body.code === 401) throw new KbAuthError(message);
+    throw new Error(message);
   }
   return body;
 }
@@ -128,6 +140,21 @@ export function loadKbCaptcha(): Promise<KbCaptcha> {
   return kbCaptchaImpl();
 }
 
+/** 登录用户自己的知识库 MCP Key。没有或已停用时返回空串。 */
+export async function fetchKbMcpApiKey(accessToken: string): Promise<string> {
+  const body = await kbFetch("/system/mcp-api-key", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      clientid: KB_CLIENT_ID,
+    },
+    signal: AbortSignal.timeout(8_000),
+  });
+  const data = (body.data ?? null) as { plainKey?: string; status?: string } | null;
+  if (!data || data.status === "1") return "";
+  const key = data.plainKey?.trim() ?? "";
+  return key.startsWith("kb_") ? key : "";
+}
+
 export async function loadKbSession(accessToken: string): Promise<KbSession> {
   const body = await kbFetch("/system/user/getInfo", {
     headers: {
@@ -140,7 +167,7 @@ export async function loadKbSession(accessToken: string): Promise<KbSession> {
     user?: { userId?: string | number; userName?: string; phoneNumber?: string; nickName?: string };
   };
   const user = data.user;
-  if (!user?.userId || !user.userName) throw new Error("知识库未返回用户信息");
+  if (!user?.userId || !user.userName) throw new KbAuthError("知识库未返回用户信息");
   return {
     accessToken,
     userId: String(user.userId),

@@ -1,0 +1,260 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: im
+run_py: skills/im/run.py
+schema_version: cli_reference.v1
+subcommands:
+  add-member:
+    usage: run.py add-member [-h] --member MEMBER [--confirm] [chat_id]
+    positional:
+    - chat_id
+    options:
+    - --confirm
+    - --member
+    example: python skills/im/run.py add-member <chat_id>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  bookmarks:
+    usage: run.py bookmarks [-h] [chat_id]
+    positional:
+    - chat_id
+    options: []
+    example: python skills/im/run.py bookmarks <chat_id>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  create-chat:
+    usage: run.py create-chat [-h] --member MEMBER [--type {p2p,group}]
+    positional: []
+    options:
+    - --confirm
+    - --member
+    - --name
+    - --type
+    example: python skills/im/run.py create-chat
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  download-url:
+    usage: run.py download-url [-h]
+    positional:
+    - chat_id
+    - message_id
+    - storage_key
+    - file_name
+    options: []
+    example: python skills/im/run.py download-url <chat_id> <message_id> <storage_key>
+      <file_name>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-name
+    - --file_name
+    - --message-id
+    - --message_id
+    - --storage-key
+    - --storage_key
+  get:
+    usage: run.py get [-h] [chat_id]
+    positional:
+    - chat_id
+    options: []
+    example: python skills/im/run.py get <chat_id>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  history:
+    usage: run.py history [-h] [--page-size PAGE_SIZE] [--start-time START_TIME]
+    positional:
+    - chat_id
+    options:
+    - --end-time
+    - --order
+    - --page-size
+    - --start-time
+    example: python skills/im/run.py history <chat_id>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  list:
+    usage: run.py list [-h] [--page-size PAGE_SIZE]
+    positional: []
+    options:
+    - --page-size
+    example: python skills/im/run.py list
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-members:
+    usage: run.py list-members [-h] [--page-size PAGE_SIZE] [--type {user,app}]
+    positional:
+    - chat_id
+    options:
+    - --page-size
+    - --type
+    example: python skills/im/run.py list-members <chat_id>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  recall:
+    usage: run.py recall [-h] [chat_id] [message_id]
+    positional:
+    - chat_id
+    - message_id
+    options: []
+    example: python skills/im/run.py recall <chat_id> <message_id>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --message-id
+    - --message_id
+  recent:
+    usage: run.py recent [-h] [--page-size PAGE_SIZE] [--start-time START_TIME]
+    positional: []
+    options:
+    - --end-time
+    - --filter-mention-me
+    - --filter-unread
+    - --page-size
+    - --start-time
+    example: python skills/im/run.py recent
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  search:
+    usage: run.py search [-h] [--page-size PAGE_SIZE] [keyword]
+    positional:
+    - keyword
+    options:
+    - --page-size
+    example: python skills/im/run.py search <keyword>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --keyword
+  search-messages:
+    usage: run.py search-messages [-h] [--keyword KEYWORD] [--chat-ids CHAT_IDS]
+    positional: []
+    options:
+    - --chat-ids
+    - --end-time
+    - --keyword
+    - --msg-types
+    - --order
+    - --page-size
+    - --sender-ids
+    - --start-time
+    example: python skills/im/run.py search-messages
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  send:
+    usage: run.py send [-h] [--text-file TEXT_FILE] [--to-user TO_USER]
+    positional:
+    - chat_id
+    - text
+    options:
+    - --at-markdown
+    - --card
+    - --confirm
+    - --file
+    - --image-key
+    - --mention
+    - --plain
+    - --rich-text
+    - --text-file
+    - --to-user
+    - --type
+    example: python skills/im/run.py send <chat_id> <text>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --text
+  sendme:
+    usage: run.py sendme [-h] [--text-file TEXT_FILE] [--type MSG_TYPE] [--plain]
+    positional:
+    - text
+    options:
+    - --at-markdown
+    - --card
+    - --confirm
+    - --file
+    - --image-key
+    - --mention
+    - --plain
+    - --rich-text
+    - --text-file
+    - --type
+    example: python skills/im/run.py sendme <text>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --text
+  update:
+    usage: run.py update [-h] [--name NAME] [--avatar AVATAR]
+    positional:
+    - chat_id
+    options:
+    - --avatar
+    - --confirm
+    - --disable-all-send
+    - --enable-history
+    - --enable-nickname
+    - --external-join-approve
+    - --join-approve
+    - --name
+    - --operation-permissions
+    - --owner-admin-bookmark
+    - --owner-admin-modify
+    - --owner-id
+    example: python skills/im/run.py update <chat_id>
+    reject_options:
+    - --chat-id
+    - --chat_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  upload:
+    usage: run.py upload [-h] [--is-avatar] [file_path]
+    positional:
+    - file_path
+    options:
+    - --is-avatar
+    example: python skills/im/run.py upload <file_path>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --file-path
+    - --file_path

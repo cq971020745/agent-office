@@ -32,6 +32,8 @@ Node 后端 (Fastify + TS) ——单容器
         │   run_skill_script / MCP 桥接工具（TypeBox schema）
         │   · terminal：宿主机 PowerShell/Bash，工作目录锁在任务工作区，默认 ask；会话授权可跳过 ask
         │   · doc_to_md：pi-quiver 扩展，只启用该扩展，产物写入 .parsed/
+        │   · ocr_to_md：内置 document-ocr 扩展，默认开源 Tesseract.js，可绑定视觉 OCR 模型，产物写入 .parsed/
+        │   · web_search / fetch_content / get_search_content / source_check：pi-web-access@0.42.0，配置在 {agentDir}/web-search.json
         │   · 输出按官方规范截断（2000 行 / 50KB，全量落盘给路径引用）
         │   · beforeToolCall 路径 jail（限制在任务工作区内）——MVP 便利级隔离
         ├── 技能：{agentDir}/skills/<name>/SKILL.md 渐进披露——系统提示词只注入元数据清单，
@@ -67,6 +69,11 @@ Node 后端 (Fastify + TS) ——单容器
 > 状态注记八（2026-10-15 八批，全工程 UI/UX 焕新 + 语音双轨闭环 + 多专家委派 + 定时巡检 + 评审遗留收官）：**语音听写与音频转写双轨闭环**——`model_providers.asr_model` 支持显式绑定 ASR 模型（三级优先级：显式绑定 > 启用/候选池 ASR 正则命中 > 兜底默认名），`GET /voice/status` 连通性诊断；前端 `VoiceDictate` 升级为 8 段实时动态声波条、300s 长时录音、Esc/取消键、失败保留重试、本地音频文件直传转写，并支持对助手回复进行 TTS 语音播报；新增 `transcribe_audio` 工具供 Agent 直接转写工作区内的音频文件。**多专家协作（子 agent 编排）**——新增 `delegate_to_agent` 工具，主控专家可将专项子任务委派给指定专家（共享当前任务工作区并防递归死循环），原路线第 4 项「子 agent 编排」正式落地。**定时与自动化巡检**——新增 `scheduled_tasks` 表与后台调度引擎（支持 `daily:HH:mm` / `weekly:1..7:HH:mm` / `interval:N`），任务中心内置「⏰ 定时巡检」视图与立即触发能力。**Markdown 与成果物预览升级**——支持 GFM 表格、代码块语法高亮与一键复制、任务列表；`PreviewPanel` 支持 HTML `allow-scripts` 交互预览、CSV 结构化表格与过滤、PDF/Audio 内联预览及系统默认程序打开。**执行轨迹持久化与安全加固**——`task_messages.meta` 持久化每轮 `thinking` 与工具步骤 `steps`；完成 D8（`GET /agents/:id` 对非管理员隐藏 `systemPrompt`）与 MCP 子进程环境变量最小化白名单隔离（`buildSafeMcpEnv`）。
 > 状态注记九（2026-10-15）：宿主终端 `terminal` 使用 Pi 的 PowerShell/Bash，工作目录锁在任务工作区，默认每次确认；`task_session_grants` 支持本会话允许和撤销，专家 `deny` 优先。`pi-quiver@6.13.2` 只启用 `doc_to_md`，二进制附件不再被 `workspace_read` 当文本读出，OLE2 伪 `.docx` 会复制到 `.parsed/*.doc`。`run_code` 继续只做无网络沙箱计算。
 > 状态注记十（2026-10-16）：登录改为企业知识库用户（ADR 0006）。模型供应商按用户隔离，旧的全局供应商整份交给超级管理员（ADR 0007）。侧栏嵌入知识库工作台，桌面 CSP 须放行 API 源上的 iframe。
+> 状态注记十一（2026-10-16）：模型供应商增加 `api_format`（Chat Completions / Anthropic Messages / Responses），对应 pi-ai `KnownApi`。任务运行与一句话生成专家按该字段发请求；拉取模型列表仍只请求 `{baseUrl}/models`，不自动补 `/v1`。默认 Chat Completions。
+> 状态注记十二（2026-10-17）：接入 `npm:pi-web-access@0.42.0`，任务会话加载 `web_search` / `fetch_content` / `get_search_content` / `source_check`。`PI_CODING_AGENT_DIR` 未设置时绑到 `{agentDir}`，密钥与路由写 `{agentDir}/web-search.json`，不读本机 `~/.pi`；缺省写入 `toolActivation: "eager"`。`fetch_url` 保留为简单 HTML 回退。
+> 状态注记十三（2026-10-18）：会话权限预选——`tasks.access_mode`（plan / confirm / autonomous / full），发送前选定；工具闸门执行时现查档位。计划模式对齐 Pi plan-mode（只读 + terminal 白名单 + 先出计划再确认），确认后升为 autonomous。专家 deny 仍优先。
+> 状态注记十四（2026-10-18）：任务详情预览区内嵌 Electron `<webview>` 浏览器与网页标注：点选元素 → 说明 → 截图附件回灌任务对话（非 pi-annotate 外置 Chrome 扩展方案）。
+> 状态注记十五（2026-10-18）：侧栏「项目」= `custom_workspace=1` 的用户自选目录（专家常驻目录不算）；`POST /projects/detach` 只取消归组。用户消息 `meta.attachments` 回传气泡；图片内联 + 灯箱。`PATCH /tasks/:id/model` 追问换模型并 `invalidateSession`。webview 禁用 `allowpopups`，截图走主进程 `captureWebContents`。
 
 1. 代码执行工具 + 每任务 Docker 容器（pi 官方 containerization 路线；`run_code` 已提供逐次调用的容器隔离，剩余为每任务常驻容器升级）
 2. 用户自建 agent（模型/提示词/工具组合）
@@ -80,10 +87,14 @@ Node 后端 (Fastify + TS) ——单容器
 - 内存 AgentSession：闲置 > 1 小时由 sweeper 回收（10 分钟一扫）；会话 JSONL 常驻磁盘，追问时自动恢复。
 - 任务删除：级联清理成果物索引、消息、附件登记、会话工具授权（`task_session_grants`）、平台隔离工作区目录、会话 JSONL 与事件缓冲；用户自选目录/专家常驻文件夹不删。
 - 登录限流：用户名+IP 维度，10 次失败锁 10 分钟（进程内，重启清零）。
-- 附件上传：单条消息 ≤ 10 个文件、单文件 ≤ 20MB（服务端 + 客户端双重限制，派发与追问共用 `uploads.ts`）；附件记入 `task_uploads` 表并从成果物扫描中排除；追问竞态 busy 时回滚刚落盘的附件。
+- 附件上传：单条消息 ≤ 10 个文件、单文件 ≤ 20MB（服务端 + 客户端双重限制，派发与追问共用 `uploads.ts`）；附件记入 `task_uploads` 表并从成果物扫描中排除；用户消息 `meta.attachments` 供气泡展示（图片内联，其它为文件条）；追问竞态 busy 时回滚刚落盘的附件。
+- 项目归组：`tasks.custom_workspace` 仅在派发时选手动目录为 1；侧栏「项目」按工作目录聚合，支持新建任务 / 查看文件 / 资源管理器打开 / `POST /projects/detach` 移除归组。专家常驻目录与平台隔离区不进「项目」。
+- 追问换模型：`PATCH /tasks/:id/model` 校验当前用户启用的供应商/模型后更新任务字段并 `invalidateSession`；进行中（running/pending）拒绝。
+- 网页标注（桌面）：预览区 `<webview>` 标注回灌对话；禁止 `allowpopups`；截图经主进程 `captureWebContents`；主窗口拦截跨域导航与 `window.open`。纯浏览器打开时无内嵌能力。
 - 代码执行：`run_code` 每次调用独立 `docker run`（无网络、512MB 内存、1 CPU、64 进程、只读根 + 只读工作区挂载），120s 硬超时；Docker 守护进程不可用时工具不注入（见 ADR 0004）。它不代替宿主终端。
-- 宿主终端（2026-10-15）：`terminal` 复用 Pi 的 PowerShell/Bash，工作目录锁在任务工作区，环境变量只保留 PATH、TEMP、USERPROFILE 等运行所需项。默认每次确认；`task_session_grants` 记录「本会话允许」，执行时现查，撤销后下一次调用重新询问。写操作护栏拦截格式化磁盘、递归删除盘根、关机等命令。
-- 文档解析（2026-10-15）：`settings.json` 声明 `npm:pi-quiver@6.13.2`，只加载 `extensions/doc_to_md.ts`。`workspace_read` 遇到二进制文件返回调用说明；OLE2 内容被存成 `.docx` 时复制隐藏的 `.doc` 到 `.parsed/`，原文件不改。产物目录以点开头，不计入成果物。Docker 镜像安装 Python 3 与 LibreOffice，供旧版 Office 降级转换。
+- 宿主终端（2026-10-15）：`terminal` 复用 Pi 的 PowerShell/Bash，工作目录锁在任务工作区，环境变量只保留 PATH、TEMP、USERPROFILE 等运行所需项。默认每次确认（自主模式）；`task_session_grants` 记录「本会话允许」，执行时现查，撤销后下一次调用重新询问。写操作护栏拦截格式化磁盘、递归删除盘根、关机等命令。会话权限档位可改为变更前确认 / 完全访问 / 计划模式（计划模式仅允许只读命令白名单）。
+- 文档解析（2026-10-15）：`settings.json` 声明 `npm:pi-quiver@6.13.2`，只加载 `extensions/doc_to_md.ts`。`workspace_read` 遇到二进制文件返回调用说明；OLE2 内容被存成 `.docx` 时复制隐藏的 `.doc` 到 `.parsed/`，原文件不改。产物目录以点开头，不计入成果物。Docker 镜像安装 Python 3 与 LibreOffice，供旧版 Office 降级转换。扫描件/图片由 `ocr_to_md` 处理：登录后为当前用户种入「TextIn OCR」供应商（模型 ID `textin`，默认地址 `http://10.50.11.17`，密钥来自该供应商或 `TEXT_IN_API_KEY`），`ocr_model=textin` 走合合解析而不是 Chat Completions。未绑定或 TextIn 无密钥时回落开源 Tesseract.js。也可绑定视觉 OCR 模型，或用 `OCR_ENGINE` 强制引擎。`textin` 不进入派发任务的对话模型列表。
+- 网页检索（2026-10-17）：`settings.json` 声明 `npm:pi-web-access@0.42.0`，加载其扩展工具。配置路径经 `PI_CODING_AGENT_DIR` 指向 `{agentDir}/web-search.json`。无密钥时走包内默认检索链；专家工具策略可对 `web_search` / `fetch_content` / `get_search_content` / `source_check` 设 ask/deny。`fetch_url` 仍注入，作为简单 HTML 回退。
 - pi 插件包（2026-10-13 增补）：`pi-packages/office-suite` 随服务端启动同步到 `{agentDir}/packages/office-suite`（内容差异驱动、幂等、可自愈），声明写 `{agentDir}/settings.json` 的 `packages` 数组（相对路径，随数据目录迁移）；DefaultResourceLoader 每任务会话自动加载，扩展加载失败只告警不阻断任务。
 
 ## 6. 假设与遗留问题（需用户确认）

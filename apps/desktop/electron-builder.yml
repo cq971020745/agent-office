@@ -1,0 +1,63 @@
+appId: com.agentoffice.app
+productName: Agent Office
+copyright: Copyright © Agent Office
+directories:
+  output: release
+  buildResources: build
+afterPack: scripts/after-pack.cjs
+files:
+  - out/**/*
+asar: true
+asarUnpack:
+  - "**/*.node"
+extraResources:
+  - from: ../../dist/stage/server
+    to: server
+  - from: ../../dist/stage/node
+    to: node
+  - from: ../../dist/stage/pi-packages
+    to: pi-packages
+  - from: ../../dist/stage/skills-catalog
+    to: skills-catalog
+  - from: ../../dist/stage/agent-packs
+    to: agent-packs
+# Windows 未开开发者模式时，winCodeSign 解压 darwin 符号链接会失败；一体包不做代码签名
+forceCodeSigning: false
+win:
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Agent Office
+  artifactName: ${productName}-${version}-win-${arch}-Setup.${ext}
+portable:
+  artifactName: ${productName}-${version}-win-${arch}-Portable.${ext}
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.productivity
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  category: Office
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

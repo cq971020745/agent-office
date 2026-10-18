@@ -367,7 +367,7 @@ export class McpHttpClient {
     }
   }
 
-  async listTools(): Promise<McpToolInfo[]> {
+  private async handshake(): Promise<void> {
     await this.request(
       "initialize",
       {
@@ -378,6 +378,15 @@ export class McpHttpClient {
       this.startupTimeoutSec
     );
     await this.notify("notifications/initialized", {});
+  }
+
+  private async ensureSession(): Promise<void> {
+    if (this.sessionId) return;
+    await this.handshake();
+  }
+
+  async listTools(): Promise<McpToolInfo[]> {
+    await this.ensureSession();
     const res = (await this.request("tools/list", {}, this.toolTimeoutSec)) as {
       tools?: { name?: string; description?: string; inputSchema?: unknown }[];
     };
@@ -395,7 +404,16 @@ export class McpHttpClient {
   }
 
   async callTool(name: string, args: unknown): Promise<unknown> {
-    return this.request("tools/call", { name, arguments: args ?? {} }, this.toolTimeoutSec);
+    await this.ensureSession();
+    try {
+      return await this.request("tools/call", { name, arguments: args ?? {} }, this.toolTimeoutSec);
+    } catch (err) {
+      if (!isMcpSessionLost(err)) throw err;
+      // 服务端会话过期或进程缓存了空会话：重新握手后再调一次。
+      this.sessionId = null;
+      await this.handshake();
+      return this.request("tools/call", { name, arguments: args ?? {} }, this.toolTimeoutSec);
+    }
   }
 
   close(): void {
@@ -409,6 +427,11 @@ export class McpHttpClient {
     }
     this.sessionId = null;
   }
+}
+
+function isMcpSessionLost(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /session id missing|session not found|invalid session|mcp-session-id/i.test(msg);
 }
 
 function parseJsonArray(raw: string): string[] {
@@ -495,12 +518,13 @@ export async function probeMcpTools(row: McpServerRow): Promise<McpToolInfo[]> {
  * 把所有启用的 MCP 服务器工具映射为 pi 自定义工具（跳过 disabled_tools 里点名的工具）。
  * 单个服务器失败只打日志，不影响其余工具与其他任务。
  */
-export async function getMcpTools(): Promise<ToolDefinition[]> {
+export async function getMcpTools(userId?: string): Promise<ToolDefinition[]> {
+  if (!userId) return [];
   const rows = db
     .prepare(
-      "SELECT id, name, command, args, env, enabled, type, url, headers, startup_timeout_sec, tool_timeout_sec, disabled_tools FROM mcp_servers WHERE enabled = 1"
+      "SELECT id, name, command, args, env, enabled, type, url, headers, startup_timeout_sec, tool_timeout_sec, disabled_tools FROM mcp_servers WHERE enabled = 1 AND user_id = ?"
     )
-    .all() as unknown as McpServerRow[];
+    .all(userId) as unknown as McpServerRow[];
   const tools: ToolDefinition[] = [];
   for (const row of rows) {
     try {

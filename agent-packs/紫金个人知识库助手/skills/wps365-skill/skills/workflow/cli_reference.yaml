@@ -1,0 +1,82 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: workflow
+run_py: skills/workflow/run.py
+schema_version: cli_reference.v1
+subcommands:
+  get-instance:
+    usage: run.py get-instance [-h] --user-id USER_ID instance_id
+    positional:
+    - instance_id
+    options:
+    - --user-id
+    example: python skills/workflow/run.py get-instance <instance_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --instance-id
+    - --instance_id
+  list-ccs:
+    usage: run.py list-ccs [-h] [--page-size PAGE_SIZE] [--page-token PAGE_TOKEN]
+    positional: []
+    options:
+    - --approval-define-id
+    - --cc-user
+    - --instance-id
+    - --page-size
+    - --page-token
+    - --read-status
+    - --time-from
+    - --time-to
+    example: python skills/workflow/run.py list-ccs
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-instances:
+    usage: run.py list-instances [-h] [--promoter PROMOTER] instance_ids
+    positional:
+    - instance_ids
+    options:
+    - --promoter
+    example: python skills/workflow/run.py list-instances <instance_ids>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --instance-ids
+    - --instance_ids
+  list-instances-brief:
+    usage: run.py list-instances-brief [-h] [--page-size PAGE_SIZE]
+    positional: []
+    options:
+    - --approval-define-id
+    - --instance-status
+    - --page-size
+    - --page-token
+    - --promoter
+    - --time-from
+    - --time-to
+    example: python skills/workflow/run.py list-instances-brief
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-timelines:
+    usage: run.py list-timelines [-h] [--page-size PAGE_SIZE]
+    positional: []
+    options:
+    - --approval-define-id
+    - --instance-id
+    - --operator
+    - --page-size
+    - --page-token
+    - --time-from
+    - --time-to
+    - --type
+    example: python skills/workflow/run.py list-timelines
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id

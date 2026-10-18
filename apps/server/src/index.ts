@@ -10,9 +10,11 @@ import { config, ensureDirs } from "./config.js";
 import { ensureDefaultAgent, migrate } from "./db.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerProjectRoutes } from "./routes/projects.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerVoiceRoutes } from "./routes/voice.js";
 import { registerKbEmbedRoutes } from "./kb-embed.js";
+import { startKbSessionKeeper } from "./kb-session.js";
 import { registerWpsRoutes, warmDirectoryCache } from "./routes/wps.js";
 import { ensureExternalPiPackages, installPiPackages } from "./packages.js";
 import { registerLenientJsonParser } from "./json-body.js";
@@ -38,16 +40,18 @@ async function main(): Promise<void> {
   ensureDefaultAgent();
   sweepOrphanTasks();
   ensureSeedSkills();
-  // WPS 365 技能包：随仓库内置，启动时自动安装（已存在则跳过，不覆盖用户改动）
-  try {
-    const outcome = await installSkillFromSource("wps365-skill");
-    console.log(`[skills] 内置技能已就绪：${outcome.names.join("、")}（来源 ${outcome.source}）`);
-  } catch (err) {
-    const msg = String((err as Error).message ?? err);
-    if (msg.includes("已存在")) {
-      console.log("[skills] 内置技能 wps365-skill 已安装，跳过");
-    } else {
-      console.warn(`[skills] 内置技能 wps365-skill 自动安装失败：${msg}`);
+  // 随仓库内置的技能：已存在则跳过，不覆盖用户改动
+  for (const skillId of ["wps365-skill", "document-ocr", "skill-creator"] as const) {
+    try {
+      const outcome = await installSkillFromSource(skillId);
+      console.log(`[skills] 内置技能已就绪：${outcome.names.join("、")}（来源 ${outcome.source}）`);
+    } catch (err) {
+      const msg = String((err as Error).message ?? err);
+      if (msg.includes("已存在")) {
+        console.log(`[skills] 内置技能 ${skillId} 已安装，跳过`);
+      } else {
+        console.warn(`[skills] 内置技能 ${skillId} 自动安装失败：${msg}`);
+      }
     }
   }
   const piPackages = installPiPackages();
@@ -57,14 +61,16 @@ async function main(): Promise<void> {
   for (const id of piPackages.skipped) {
     console.warn(`[packages] 跳过 pi 插件包 ${id}：仓库内未找到包模板（PI_PACKAGES_DIR 未指向仓库根？）`);
   }
-  try {
-    await ensureExternalPiPackages();
-    console.log("[packages] pi-quiver doc_to_md 已就绪");
-  } catch (err) {
-    console.warn(`[packages] pi-quiver 安装失败，文档解析暂不可用：${err instanceof Error ? err.message : String(err)}`);
+  const external = await ensureExternalPiPackages();
+  for (const source of external.ready) {
+    console.log(`[packages] ${source} 已就绪`);
+  }
+  for (const { source, error } of external.failed) {
+    console.warn(`[packages] ${source} 安装失败：${error}`);
   }
   startSessionSweeper();
   startScheduler();
+  startKbSessionKeeper();
   warmDirectoryCache();
 
   const app = Fastify({ logger: true });
@@ -93,6 +99,7 @@ async function main(): Promise<void> {
   await registerKbEmbedRoutes(app);
   registerAdminRoutes(app);
   registerTaskRoutes(app);
+  registerProjectRoutes(app);
   registerScheduleRoutes(app);
   registerVoiceRoutes(app);
   registerWpsRoutes(app);
@@ -101,7 +108,7 @@ async function main(): Promise<void> {
   const webDist = process.env.WEB_DIST ?? path.resolve(process.cwd(), "../desktop/out/renderer");
   if (fs.existsSync(path.join(webDist, "index.html"))) {
     await app.register(fastifyStatic, { root: webDist });
-    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/schedules", "/skills", "/voice", "/wps", "/kb-embed", "/new-general-rag-kb"];
+    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/projects", "/schedules", "/skills", "/voice", "/wps", "/kb-embed", "/new-general-rag-kb"];
     app.setNotFoundHandler((req, reply) => {
       const url = req.raw.url ?? "";
       // 裸 /admin 是管理页入口；管理 API 全部带子路径（/admin/providers 等）

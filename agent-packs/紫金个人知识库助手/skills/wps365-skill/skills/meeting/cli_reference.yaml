@@ -1,0 +1,109 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: meeting
+run_py: skills/meeting/run.py
+schema_version: cli_reference.v1
+subcommands:
+  get-meeting:
+    usage: run.py get-meeting [-h] meeting_id
+    positional:
+    - meeting_id
+    options: []
+    example: python skills/meeting/run.py get-meeting <meeting_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --meeting-id
+    - --meeting_id
+  list-participants:
+    usage: run.py list-participants [-h] [--page-size PAGE_SIZE]
+    positional:
+    - meeting_id
+    options:
+    - --page-size
+    - --page-token
+    example: python skills/meeting/run.py list-participants <meeting_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --meeting-id
+    - --meeting_id
+  list-records:
+    usage: run.py list-records [-h] [--start-time START_TIME]
+    positional: []
+    options:
+    - --all
+    - --end-time
+    - --page-size
+    - --page-token
+    - --start-time
+    - --user-id
+    example: python skills/meeting/run.py list-records
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-started:
+    usage: run.py list-started [-h] --start-time START_TIME --end-time END_TIME
+    positional: []
+    options:
+    - --all
+    - --end-time
+    - --page-size
+    - --page-token
+    - --start-time
+    example: python skills/meeting/run.py list-started
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  meeting-summary:
+    usage: run.py meeting-summary [-h] meeting_id
+    positional:
+    - meeting_id
+    options: []
+    example: python skills/meeting/run.py meeting-summary <meeting_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --meeting-id
+    - --meeting_id
+  record-chapters:
+    usage: run.py record-chapters [-h] record_id
+    positional:
+    - record_id
+    options: []
+    example: python skills/meeting/run.py record-chapters <record_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --record-id
+    - --record_id
+  record-summary:
+    usage: run.py record-summary [-h] record_id
+    positional:
+    - record_id
+    options: []
+    example: python skills/meeting/run.py record-summary <record_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --record-id
+    - --record_id
+  record-transcript:
+    usage: run.py record-transcript [-h] record_id
+    positional:
+    - record_id
+    options: []
+    example: python skills/meeting/run.py record-transcript <record_id>
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --record-id
+    - --record_id

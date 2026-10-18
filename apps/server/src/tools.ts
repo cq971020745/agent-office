@@ -11,6 +11,7 @@ const OLE2_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]);
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const PDF_MAGIC = Buffer.from("%PDF");
 const OFFICE_EXTENSIONS = new Set([".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".xlsm", ".pdf"]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif"]);
 
 export type BinaryKind = "text" | "ole" | "ooxml" | "pdf" | "binary";
 
@@ -27,6 +28,7 @@ export function detectBinaryKind(buf: Buffer): BinaryKind {
 /**
  * 二进制附件的可读说明。OLE2 内容配了 .docx 这类后缀时，复制一份隐藏的 .doc
  * 给 doc_to_md，原文件不动。产物目录 .parsed 以点开头，不会被记成成果物。
+ * 扫描件 / 图片走 ocr_to_md（默认开源 Tesseract.js，可配置 OCR 模型）。
  */
 export function prepareDocumentHint(root: string, rel: string, kind: BinaryKind): string {
   const ext = path.extname(rel).toLowerCase();
@@ -41,6 +43,13 @@ export function prepareDocumentHint(root: string, rel: string, kind: BinaryKind)
     fs.copyFileSync(src, dest);
     toolPath = copyRel;
   }
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    return [
+      `「${rel}」是图片，不能用 workspace_read 直接读取。`,
+      `请调用 ocr_to_md：path="${toolPath}"，outputDir="${outputDir}"。`,
+      "然后用 workspace_read 读取返回结果里的 Saved-To Markdown。不要安装系统 Tesseract，也不要把附件上传到云盘只为提取正文。",
+    ].join("\n");
+  }
   const convertible =
     kind === "ole" || kind === "pdf" || ((kind === "ooxml" || kind === "binary") && OFFICE_EXTENSIONS.has(ext));
   if (!convertible) {
@@ -48,11 +57,18 @@ export function prepareDocumentHint(root: string, rel: string, kind: BinaryKind)
   }
   const mismatch =
     kind === "ole" && ext !== ".doc" ? "文件头是旧版 OLE2 Word，和当前扩展名不一致，已生成不改原件的 .doc 副本。" : "";
+  const ocrHint =
+    kind === "pdf" || ext === ".pdf"
+      ? "如果 Saved-To Markdown 几乎没有正文（扫描件、图片型 PDF），再调用 ocr_to_md，path 和 outputDir 相同。不要安装系统 Tesseract。"
+      : "";
   return [
     `「${rel}」是二进制文档，不能用 workspace_read 直接读取。${mismatch}`,
     `请调用 doc_to_md：path="${toolPath}"，outputDir="${outputDir}"。`,
+    ocrHint,
     "然后用 workspace_read 读取返回结果里的 Saved-To Markdown。不要为了提取正文把本地附件上传到云盘。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function truncateForContext(text: string): string {
@@ -146,15 +162,17 @@ export function workspaceTools(root: string, userId?: string): ToolDefinition[] 
     name: "workspace_read",
     label: "读取工作区文件",
     description:
-      "Read a UTF-8 text file from the task workspace. Path is workspace-relative. Binary Office/PDF files are refused; call doc_to_md and read the markdown it writes under .parsed/.",
+      "Read a UTF-8 text file from the task workspace. Path is workspace-relative. Binary Office/PDF files are refused; call doc_to_md (or ocr_to_md for scans/images) and read the markdown it writes under .parsed/.",
     parameters: ReadParams,
     execute: async (_id, params) => {
       const file = assertInWorkspace(root, params.path);
       if (!fs.existsSync(file)) throw new Error(`file not found: ${params.path}`);
       const buf = fs.readFileSync(file);
+      const ext = path.extname(params.path).toLowerCase();
       const kind = detectBinaryKind(buf);
-      if (kind !== "text") {
-        return { content: [{ type: "text", text: prepareDocumentHint(root, params.path, kind) }], details: undefined };
+      if (kind !== "text" || IMAGE_EXTENSIONS.has(ext)) {
+        const hintKind = IMAGE_EXTENSIONS.has(ext) && kind === "text" ? "binary" : kind;
+        return { content: [{ type: "text", text: prepareDocumentHint(root, params.path, hintKind) }], details: undefined };
       }
       return { content: [{ type: "text", text: truncateForContext(buf.toString("utf8")) }], details: undefined };
     },

@@ -17,6 +17,10 @@ interface AgentOfficeBridge {
   showItemInFolder: (target: string) => Promise<{ ok: boolean; message?: string }>;
   /** 发送系统原生桌面通知 */
   notify: (title: string, body?: string) => Promise<{ ok: boolean }>;
+  /** 主进程截取 webview 页面为 PNG（避免渲染进程 capturePage 白屏） */
+  captureWebContents: (
+    webContentsId: number
+  ) => Promise<{ ok: boolean; png?: Uint8Array; message?: string }>;
 }
 
 interface Window {

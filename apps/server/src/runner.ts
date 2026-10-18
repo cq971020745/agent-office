@@ -6,22 +6,38 @@ import {
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Model } from "@earendil-works/pi-ai";
-import type { TaskTurnStep } from "@office/shared";
+import {
+  resolveProviderApiFormat,
+  type AccessMode,
+  type ProviderApiFormat,
+  type TaskTurnStep,
+} from "@office/shared";
 import fs from "node:fs";
 import path from "node:path";
 import { codeExecToolIfAvailable, hasCodeExec } from "./codeExec.js";
-import { paths } from "./config.js";
+import { isPlatformWorkspace, paths } from "./config.js";
 import { db, now, uuid } from "./db.js";
 import { createHostTerminalTool } from "./host-terminal.js";
 import { readAgentsMd } from "./instructions.js";
+import { knowledgeTools } from "./knowledge-tools.js";
 import { getMcpTools } from "./mcp.js";
 import { parseModelOverrides, resolveModelCaps } from "./model-caps.js";
+import { isSafePlanCommand, PLAN_MODE_INSTRUCTION } from "./plan-mode.js";
 import { skillScriptTool } from "./skill-scripts.js";
-import { buildSkillsPrompt, expandSkillSlash, readSkillTool } from "./skills.js";
+import { agentUsesSkill, buildSkillsPrompt, expandSkillSlash, readSkillTool, writeSkillTool } from "./skills.js";
 import { publishPi, publishStatus, publishUser } from "./sse.js";
 import { cancelToolApproval, hasSessionGrant, requestToolApproval } from "./tool-approval.js";
-import { parseToolPolicy, policyFor, toolNeedsApproval } from "./tool-policy.js";
+import { parseAccessMode, parseToolPolicy, PLAN_BLOCKED_TOOLS, policyFor, toolNeedsApproval } from "./tool-policy.js";
+import { writeTaskOcrRuntime } from "./ocr-runtime.js";
 import { workspaceTools } from "./tools.js";
+import {
+  createdAtAfter,
+  mergePartial,
+  partialTranscript,
+  transcriptsFromSessionEntries,
+  withInterruptNote,
+  type SessionMessageLike,
+} from "./turn-transcript.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 interface ProviderRow {
@@ -30,6 +46,7 @@ interface ProviderRow {
   base_url: string;
   api_key: string;
   model_overrides: string | null;
+  api_format?: string | null;
 }
 
 interface AgentRow {
@@ -45,7 +62,7 @@ const OFFICE_PREAMBLE = `You are a task-executing agent in an office automation 
 Environment:
 - Each task gets an isolated workspace directory (currently empty). Treat it as your office desk.
 - All output files (reports, drafts, code, data) MUST be written there with the workspace_write or workspace_edit tool. Deliverables are collected from that directory.
-- Use workspace_list / workspace_read to inspect files in the workspace, transcribe_audio to transcribe any audio files (.wav/.mp3/.m4a/.webm/.ogg) into text, and fetch_url to read web pages when needed.
+- Use workspace_list / workspace_read to inspect files in the workspace, transcribe_audio to transcribe any audio files (.wav/.mp3/.m4a/.webm/.ogg) into text, web_search for public-web research, and fetch_content or fetch_url to read a known URL.
 - You have no shell access on purpose: produce files, not terminal effects.
 - When the task is complete, end with a short final message summarizing what you produced (mention file names).`;
 
@@ -54,7 +71,7 @@ const USER_DIR_PREAMBLE = `You are a task-executing agent in an office automatio
 Environment:
 - You are working inside a directory CHOSEN BY THE USER (your current workspace). It may already contain files; use workspace_list / workspace_read to inspect them before overwriting anything.
 - All output files MUST be written into that directory with the workspace_write or workspace_edit tool. Deliverables are collected from files created or modified during this task.
-- transcribe_audio is available to transcribe audio files (.wav/.mp3/.m4a/.webm/.ogg), and fetch_url is available to read web pages when needed.
+- transcribe_audio is available to transcribe audio files (.wav/.mp3/.m4a/.webm/.ogg). Use web_search for public-web research, and fetch_content or fetch_url to read a known URL.
 - You have no shell access on purpose: produce files, not terminal effects.
 - When the task is complete, end with a short final message summarizing what you produced (mention file names).`;
 
@@ -63,8 +80,14 @@ const NO_SHELL_LINE = "- You have no shell access on purpose: produce files, not
 const TERMINAL_NOTE =
   "- The terminal tool runs host commands in this task workspace (PowerShell on Windows, bash on Linux/macOS). It uses the current server process privileges and does not elevate. Each call needs approval unless the user has allowed that tool for this task session. Use it to run workspace scripts such as .ps1, .py, .js, .bat, and .cmd.";
 
+const WRITE_SKILL_NOTE =
+  "- To publish a platform skill into the shared skill library, call write_skill after agreeing name, description and body with the user. Do not only write SKILL.md into the task workspace. write_skill needs approval.";
+
 const DOC_NOTE =
-  "- Office, PDF, and legacy Word files are binary. Do not read them with workspace_read. Call doc_to_md with outputDir under the hidden .parsed/ directory, then workspace_read the Saved-To markdown. Do not upload a local attachment to WPS cloud just to extract its text.";
+  "- Office, PDF, images, and legacy Word files are binary. Do not read them with workspace_read. Call doc_to_md with outputDir under the hidden .parsed/ directory, then workspace_read the Saved-To markdown. If that markdown is empty or the file is a scanned PDF / screenshot / photo, call ocr_to_md with the same path and outputDir. Default OCR is open-source Tesseract.js (OCR_MODEL language packs). A bound vision OCR model overrides it. Image files (png/jpg/tif/bmp/webp) skip doc_to_md and go straight to ocr_to_md. Do not install system Tesseract. Do not upload a local attachment to WPS cloud just to extract its text. Never rename, move, or overwrite user-uploaded source files; keep their original filenames. Conversion outputs must stay under .parsed/ only.";
+
+const WEB_NOTE =
+  "- web_search searches the public internet. fetch_content reads a known URL (pages, GitHub, PDFs, YouTube). fetch_url is a simple HTML fallback if fetch_content is unavailable. get_search_content pages through stored search results. source_check gathers cited sources for a claim.";
 
 const CODE_EXEC_NOTE =
   "- The run_code tool executes a JavaScript/Python script in a network-isolated container with this workspace mounted read-only at /workspace. Use it for untrusted computation. It does not replace terminal, and it cannot reach office APIs.";
@@ -90,24 +113,25 @@ export function buildPreamble(
       "\n- The run_skill_script tool executes Python scripts bundled inside installed platform skills (see <platform_skills>) on the host, with the skill's own environment (e.g. WPS 365 login credentials) already injected. This reaches office APIs (contacts, IM chats, cloud docs, calendar, mail) that run_code's network-isolated sandbox cannot. Read the skill's docs with read_skill first, then run its scripts through this tool.\n- When the task is complete"
     );
   }
-  const capabilityNotes = [TERMINAL_NOTE, DOC_NOTE, codeExec ? CODE_EXEC_NOTE : ""].filter(Boolean).join("\n");
+  const capabilityNotes = [TERMINAL_NOTE, WRITE_SKILL_NOTE, DOC_NOTE, WEB_NOTE, codeExec ? CODE_EXEC_NOTE : ""].filter(Boolean).join("\n");
   return base.replace(NO_SHELL_LINE, capabilityNotes);
 }
 
-/** 用 model_providers 行在内存中注册一个 OpenAI 兼容供应商，并构造对应 Model。 */
+/** 用 model_providers 行在内存中注册供应商，并按该行的对话协议构造 Model。 */
 async function buildRuntimeAndModel(
   provider: ProviderRow,
   modelId: string
-): Promise<{ runtime: ModelRuntime; model: Model<"openai-completions"> }> {
+): Promise<{ runtime: ModelRuntime; model: Model<ProviderApiFormat> }> {
   const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
   const providerId = `office-${provider.provider_id}`;
+  const api = resolveProviderApiFormat(provider.api_format);
   // 能力元数据可按模型覆盖（contextWindow/maxTokens/reasoning），未配置时用兜底默认
   const caps = resolveModelCaps(modelId, parseModelOverrides(provider.model_overrides));
   runtime.registerProvider(providerId, {
     name: provider.name,
     baseUrl: provider.base_url,
     apiKey: provider.api_key,
-    api: "openai-completions",
+    api,
     models: [
       {
         id: modelId,
@@ -120,10 +144,10 @@ async function buildRuntimeAndModel(
       },
     ],
   });
-  const model: Model<"openai-completions"> = {
+  const model: Model<ProviderApiFormat> = {
     id: modelId,
     name: modelId,
-    api: "openai-completions",
+    api,
     provider: providerId,
     baseUrl: provider.base_url,
     reasoning: caps.reasoning,
@@ -173,12 +197,12 @@ function setTaskStatus(taskId: string, status: string, error?: string): void {
   );
 }
 
-/** 用户自选目录的任务：只把任务开始之后产生/修改的文件记为成果物（2 秒时钟容差）。 */
+/** 非平台隔离工作区（用户自选目录 / 专家常驻目录）：只把任务开始之后产生/修改的文件记为成果物（2 秒时钟容差）。 */
 function deliverableSinceMs(taskId: string): number | undefined {
-  const t = db.prepare("SELECT started_at, created_at, custom_workspace FROM tasks WHERE id = ?").get(taskId) as
-    | { started_at: string | null; created_at: string; custom_workspace: number }
+  const t = db.prepare("SELECT started_at, created_at, workspace_path FROM tasks WHERE id = ?").get(taskId) as
+    | { started_at: string | null; created_at: string; workspace_path: string }
     | undefined;
-  if (!t?.custom_workspace) return undefined;
+  if (!t || isPlatformWorkspace(t.workspace_path)) return undefined;
   const base = t.started_at ?? t.created_at;
   const ms = Date.parse(base);
   return Number.isFinite(ms) ? ms - 2_000 : undefined;
@@ -187,12 +211,14 @@ function deliverableSinceMs(taskId: string): number | undefined {
 interface TaskJoinRow {
   id: string;
   user_id: string;
+  agent_id: string;
   prompt: string;
   /** 附件清单与 @ 引用等机器上下文：只随首轮发给模型，展示文本保持用户原文 */
   context_note: string;
   workspace_path: string;
   custom_workspace: number;
   session_id: string | null;
+  access_mode: string;
   agent_name: string;
   system_prompt: string;
   high_risk: number;
@@ -203,15 +229,17 @@ interface TaskJoinRow {
   base_url: string | null;
   api_key: string | null;
   model_overrides: string | null;
+  api_format: string | null;
 }
 
 // 任务级模型优先（专家与模型解耦），否则回退专家默认绑定
 const SELECT_RUN_ROW = `
-  SELECT t.id, t.user_id, t.prompt, t.context_note, t.workspace_path, t.custom_workspace, t.session_id,
+  SELECT t.id, t.user_id, t.agent_id, t.prompt, t.context_note, t.workspace_path, t.custom_workspace, t.session_id,
+         COALESCE(t.access_mode, 'autonomous') AS access_mode,
          a.name AS agent_name, a.system_prompt, a.high_risk, a.tool_policy,
          COALESCE(t.model_id, a.model_id) AS model_id,
          COALESCE(t.provider_id, a.provider_id) AS provider_id,
-         p.name AS provider_name, p.base_url, p.api_key, p.model_overrides
+         p.name AS provider_name, p.base_url, p.api_key, p.model_overrides, p.api_format
   FROM tasks t
   JOIN agents a ON a.id = t.agent_id
   LEFT JOIN model_providers p ON p.id = COALESCE(t.provider_id, a.provider_id)
@@ -242,26 +270,69 @@ function summarizeToolDetail(toolName: string, args: Record<string, unknown> | u
   return undefined;
 }
 
-function insertUserMessage(taskId: string, content: string): void {
-  db.prepare("INSERT INTO task_messages (id, task_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)").run(
-    uuid(),
-    taskId,
-    content,
-    now()
-  );
+export interface UserMessageAttachment {
+  filename: string;
+  size: number;
+  relPath?: string;
+}
+
+function insertUserMessage(
+  taskId: string,
+  content: string,
+  attachments?: UserMessageAttachment[]
+): void {
+  const meta =
+    attachments?.length
+      ? JSON.stringify({
+          attachments: attachments.map((a) => ({
+            filename: a.filename,
+            size: a.size,
+            ...(a.relPath ? { relPath: a.relPath } : {}),
+          })),
+        })
+      : "{}";
+  db.prepare(
+    "INSERT INTO task_messages (id, task_id, role, content, meta, created_at) VALUES (?, ?, 'user', ?, ?, ?)"
+  ).run(uuid(), taskId, content, meta, now());
+}
+
+/** 读取任务当前已登记的上传附件（首轮落库展示用） */
+function listTaskUploadAttachments(taskId: string): UserMessageAttachment[] {
+  return (
+    db
+      .prepare("SELECT filename, size, rel_path AS relPath FROM task_uploads WHERE task_id = ? ORDER BY created_at, rowid")
+      .all(taskId) as { filename: string; size: number; relPath: string }[]
+  ).map((r) => ({ filename: r.filename, size: r.size, relPath: r.relPath }));
 }
 
 function insertAssistantMessage(
   taskId: string,
   content: string,
-  trace?: { thinking: string; steps: TaskTurnStep[] }
+  trace?: { thinking: string; steps: TaskTurnStep[] },
+  createdAt?: string
 ): void {
   const meta: { thinking?: string; steps?: TaskTurnStep[] } = {};
   if (trace?.thinking.trim()) meta.thinking = trace.thinking.trim();
   if (trace?.steps.length) meta.steps = trace.steps;
   db.prepare(
     "INSERT INTO task_messages (id, task_id, role, content, meta, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)"
-  ).run(uuid(), taskId, content, JSON.stringify(meta), now());
+  ).run(uuid(), taskId, content, JSON.stringify(meta), createdAt ?? now());
+}
+
+/**
+ * 轮次没正常结束时也把已写出的内容落成一条助手消息，挂在对应问句下面。
+ * 否则打断、超时、失败都只留下用户消息，刷新后所有问句会堆在对话顶部。
+ */
+function persistInterrupted(taskId: string, session: AgentSession | null, baseline: number, note: string): void {
+  try {
+    const parsed = session
+      ? partialTranscript(session.messages as unknown as SessionMessageLike[], baseline)
+      : { text: "", thinking: "", steps: [] as TaskTurnStep[] };
+    const merged = mergePartial(parsed, turnTraces.get(taskId));
+    insertAssistantMessage(taskId, withInterruptNote(merged.text, note), merged);
+  } catch (err) {
+    console.error(`[runner] 中断回复落库失败（任务 ${taskId}）`, err);
+  }
 }
 
 /** 取最后一条 assistant 消息的纯文本（最终答复落库用）。 */
@@ -349,7 +420,7 @@ function buildDelegateTool(parentRow: TaskJoinRow): ToolDefinition<typeof Delega
         throw new Error(`目标专家「${target.name}」未绑定可用模型`);
       }
       const prov = db
-        .prepare("SELECT id AS provider_id, name, base_url, api_key, model_overrides FROM model_providers WHERE id = ?")
+        .prepare("SELECT id AS provider_id, name, base_url, api_key, model_overrides, api_format FROM model_providers WHERE id = ?")
         .get(providerId) as ProviderRow | undefined;
       if (!prov || !prov.base_url) {
         throw new Error(`目标专家「${target.name}」的模型供应商不可用`);
@@ -358,7 +429,12 @@ function buildDelegateTool(parentRow: TaskJoinRow): ToolDefinition<typeof Delega
       const { runtime, model } = await buildRuntimeAndModel(prov, modelId);
       const codeExecAvailable = await hasCodeExec();
       const skillsPrompt = buildSkillsPrompt(target.id);
-      const basePreamble = buildPreamble(!!parentRow.custom_workspace, codeExecAvailable, true, !!skillsPrompt);
+      const basePreamble = buildPreamble(
+    !isPlatformWorkspace(parentRow.workspace_path),
+    codeExecAvailable,
+    true,
+    !!skillsPrompt
+  );
       const platformInstructions = readAgentsMd().trim();
 
       const loader = new DefaultResourceLoader({
@@ -375,14 +451,21 @@ function buildDelegateTool(parentRow: TaskJoinRow): ToolDefinition<typeof Delega
       await loader.reload();
 
       const subSessionManager = SessionManager.create(parentRow.workspace_path, paths.sessions);
-      const mcpTools = await getMcpTools();
+      const mcpTools = await getMcpTools(parentRow.user_id);
+      const kbTools = agentUsesSkill(target.id, "enterprise-knowledge")
+        ? knowledgeTools(parentRow.workspace_path, parentRow.user_id)
+        : [];
       const codeTools = codeExecAvailable ? await codeExecToolIfAvailable(parentRow.workspace_path) : [];
-      const skillTools = skillsPrompt ? [readSkillTool(), skillScriptTool()] : [];
+      const skillTools = [
+        ...(skillsPrompt ? [readSkillTool(target.id), skillScriptTool(target.id)] : []),
+        writeSkillTool(),
+      ];
       // 子专家不注入 delegate_to_agent，防止递归死循环。会话授权跟父任务走。
       const subAllTools: ToolDefinition[] = [
         ...workspaceTools(parentRow.workspace_path, parentRow.user_id),
         createHostTerminalTool(parentRow.workspace_path),
         ...skillTools,
+        ...kbTools,
         ...mcpTools,
         ...codeTools,
       ];
@@ -428,6 +511,7 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
       base_url: row.base_url,
       api_key: row.api_key ?? "",
       model_overrides: row.model_overrides,
+      api_format: row.api_format,
     },
     row.model_id
   );
@@ -437,8 +521,13 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
     db.prepare("SELECT COUNT(*) AS n FROM task_uploads WHERE task_id = ?").get(row.id) as { n: number }
   ).n;
   // 渐进披露：系统提示词只带技能清单（专家显式绑定时仅注入绑定的技能），正文按需 read_skill
-  const skillsPrompt = buildSkillsPrompt(row.id);
-  const basePreamble = buildPreamble(!!row.custom_workspace, codeExecAvailable, uploadCount > 0, !!skillsPrompt);
+  const skillsPrompt = buildSkillsPrompt(row.agent_id);
+  const basePreamble = buildPreamble(
+    !isPlatformWorkspace(row.workspace_path),
+    codeExecAvailable,
+    uploadCount > 0,
+    !!skillsPrompt
+  );
   // 平台级全局指令（AGENTS.md）：叠加在环境提示词之上、专家人设之下，所有专家共享
   const platformInstructions = readAgentsMd().trim();
   const loader = new DefaultResourceLoader({
@@ -472,15 +561,26 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
   }
 
   // 会话建立时连接启用的 MCP 服务器，把其工具注入本会话（服务器不可用只记日志）
-  const mcpTools = await getMcpTools();
+  const mcpTools = await getMcpTools(row.user_id);
+  const kbTools = agentUsesSkill(row.agent_id, "enterprise-knowledge")
+    ? knowledgeTools(row.workspace_path, row.user_id)
+    : [];
   if (mcpTools.length) console.log(`[runner] 任务 ${row.id} 注入 ${mcpTools.length} 个 MCP 工具`);
 
   // Docker 守护进程可用时注入容器隔离的代码执行工具；不可用时静默降级
   const codeTools = codeExecAvailable ? await codeExecToolIfAvailable(row.workspace_path) : [];
   if (codeTools.length) console.log(`[runner] 任务 ${row.id} 注入 run_code（Docker 隔离代码执行）`);
 
-  const skillTools = skillsPrompt ? [readSkillTool(), skillScriptTool()] : [];
+  const skillTools = [
+    ...(skillsPrompt ? [readSkillTool(row.agent_id), skillScriptTool(row.agent_id)] : []),
+    writeSkillTool(),
+  ];
   const delegateTool = buildDelegateTool(row);
+  try {
+    writeTaskOcrRuntime(row.id, row.user_id);
+  } catch (err) {
+    console.warn(`[runner] 任务 ${row.id} 写入 OCR 配置失败：${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // 专家级工具策略：deny 直接不注入；ask 与默认询问的 terminal 包一层审批。
   // 会话授权在每次执行时现查，本会话允许和撤销都不用重建会话。
@@ -489,6 +589,7 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
     createHostTerminalTool(row.workspace_path),
     ...skillTools,
     delegateTool,
+    ...kbTools,
     ...mcpTools,
     ...codeTools,
   ];
@@ -553,22 +654,62 @@ function beginTurn(taskId: string): void {
   publishStatus(taskId, "running");
 }
 
-/** deny 滤掉；需要询问的工具套上审批。会话授权不在这里展开，避免撤销后仍被放行。 */
+/** 现查任务 access_mode；非法或缺失时回退 autonomous。 */
+function getTaskAccessMode(taskId: string): AccessMode {
+  const row = db.prepare("SELECT access_mode FROM tasks WHERE id = ?").get(taskId) as
+    | { access_mode: string }
+    | undefined;
+  return parseAccessMode(row?.access_mode) ?? "autonomous";
+}
+
+/**
+ * deny 滤掉；其余一律套上权限闸门（执行时现查 access_mode / 会话授权）。
+ * 这样中途改档位（计划→自主、切到完全访问）无需重建会话。
+ */
 function prepareCustomTools(taskId: string, tools: ToolDefinition[], policyRaw: string | null): ToolDefinition[] {
   const policy = parseToolPolicy(policyRaw);
   return tools
     .filter((tool) => policyFor(policy, tool.name) !== "deny")
-    .map((tool) => (toolNeedsApproval(policy, tool.name, false) ? gateTool(taskId, tool) : tool));
+    .map((tool) => gateTool(taskId, tool, policy));
 }
 
-/** ask 级工具包装：已有会话授权则直接执行；否则先等用户审批。等待期间刷新 lastActivity，避免 180 秒看门狗中止会话。 */
-function gateTool(taskId: string, tool: ToolDefinition): ToolDefinition {
+/**
+ * 会话权限闸门：计划模式硬拦写工具；terminal 在计划模式走只读白名单；
+ * 其余按 access_mode + 专家 ask + DEFAULT_ASK 决定是否弹审批。
+ */
+function gateTool(
+  taskId: string,
+  tool: ToolDefinition,
+  policy: ReturnType<typeof parseToolPolicy>
+): ToolDefinition {
   return {
     ...tool,
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-      if (hasSessionGrant(taskId, tool.name)) {
+      const mode = getTaskAccessMode(taskId);
+
+      if (mode === "plan") {
+        if (PLAN_BLOCKED_TOOLS.has(tool.name)) {
+          throw new Error(
+            `计划模式：禁止调用 ${tool.name}。请先输出执行清单，用户确认后再切换权限执行。`
+          );
+        }
+        if (tool.name === "terminal") {
+          const command =
+            params && typeof params === "object" && "command" in params
+              ? String((params as { command?: unknown }).command ?? "")
+              : "";
+          if (!isSafePlanCommand(command)) {
+            throw new Error(
+              `计划模式：命令不在只读白名单内，已被拦截。请改用只读命令，或确认计划后切换权限再执行。\n命令：${command}`
+            );
+          }
+        }
+      }
+
+      if (mode === "full" || !toolNeedsApproval(policy, tool.name, hasSessionGrant(taskId, tool.name), mode)) {
         return tool.execute(toolCallId, params, signal, onUpdate, ctx);
       }
+
       const keepAlive = setInterval(() => lastActivity.set(taskId, Date.now()), 30_000);
       keepAlive.unref();
       try {
@@ -623,14 +764,10 @@ export function dropTask(taskId: string): void {
   cancelToolApproval(taskId);
 }
 
-/** 高风险专家首轮只出执行清单、不动手：把这条指令包在用户任务前面。 */
-const HIGH_RISK_PLAN_INSTRUCTION = `[高风险审批流程 - 本轮为规划阶段] 这是一个高风险专家的任务。本轮你绝对不能执行任何写操作：不要运行命令、不要创建/修改/删除任何文件、不要调用任何会改变系统或工作区状态的工具（只读查看类工具允许）。
-
-你的唯一任务：基于下面的用户任务，输出一份执行清单供用户逐项确认，格式必须是 Markdown 复选框列表，每项一行：
-
-- [ ] <将要执行的具体动作，写明将运行哪些命令、创建/修改/删除哪些文件、影响范围与风险>
-
-要求：清单按执行顺序排列、每项具体可核查（不写"处理相关文件"这类模糊描述）、清单前用一句话概括整体方案、清单后加一行"请确认后执行"。除该清单外不要输出其他内容，也不要开始执行。`;
+/** 切换模型后丢弃内存会话，下一轮按新模型重建；不中止当前轮（本轮仍用旧会话对象跑完）。 */
+export function invalidateSession(taskId: string): void {
+  sessions.delete(taskId);
+}
 
 /** 看门狗包裹的单轮执行：模型 180 秒无任何事件则中止，避免任务永远卡在 running。 */
 async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, opts: { planPhase?: boolean } = {}): Promise<void> {
@@ -645,6 +782,7 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
   }, 15_000);
   watchdog.unref();
 
+  const baseline = session.messages.length;
   try {
     let promptText = prompt;
     // 模型单轮输出撞到长度上限（stopReason:"length"）时自动续跑，最多 3 轮；
@@ -652,6 +790,7 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
     for (let round = 1; ; round++) {
       // 会话建立窗口期（ensureSession 尚未返回）收到的取消/打断请求：prompt 前直接落定，不再发起新一轮
       if (cancelRequested.has(row.id)) {
+        persistInterrupted(row.id, session, baseline, "本轮已打断。");
         setTaskStatus(row.id, "cancelled");
         publishStatus(row.id, "cancelled");
         return;
@@ -666,12 +805,14 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
 
       if (stop === "error") {
         const message = lastAssistant?.errorMessage ?? "model run failed";
+        persistInterrupted(row.id, session, baseline, `本轮未完成：${message}`);
         setTaskStatus(row.id, "failed", message);
         publishStatus(row.id, "failed", message);
         return;
       }
       if (stop === "aborted" || cancelRequested.has(row.id) || timedOut) {
         const message = timedOut ? "模型 180 秒无响应，已自动中止" : undefined;
+        persistInterrupted(row.id, session, baseline, message ?? "本轮已打断。");
         setTaskStatus(row.id, timedOut ? "failed" : "cancelled", message);
         publishStatus(row.id, timedOut ? "failed" : "cancelled", message);
         return;
@@ -679,6 +820,7 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
       if (stop === "length") {
         if (round >= 3) {
           const message = "模型输出连续 3 轮被长度上限截断，任务中止；请拆小任务或换长输出模型后重试";
+          persistInterrupted(row.id, session, baseline, message);
           setTaskStatus(row.id, "failed", message);
           publishStatus(row.id, "failed", message);
           return;
@@ -712,6 +854,7 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
     const rawMessage = err instanceof Error ? err.message : String(err);
     const cancelled = !timedOut && cancelRequested.has(row.id);
     const message = timedOut ? "模型 180 秒无响应，已自动中止" : cancelled ? undefined : rawMessage;
+    persistInterrupted(row.id, session, baseline, message ?? "本轮已打断。");
     setTaskStatus(row.id, cancelled ? "cancelled" : "failed", message);
     publishStatus(row.id, cancelled ? "cancelled" : "failed", message);
   } finally {
@@ -722,6 +865,7 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
 /** 会话建立失败（供应商配置错误等）时的兜底落库。 */
 function failTurn(taskId: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
+  persistInterrupted(taskId, null, 0, `本轮未完成：${message}`);
   setTaskStatus(taskId, "failed", message);
   publishStatus(taskId, "failed", message);
 }
@@ -733,16 +877,19 @@ function failTurn(taskId: string, err: unknown): void {
 export async function startTask(taskId: string): Promise<void> {
   const row = getRunRow(taskId);
   if (!row) return;
-  insertUserMessage(taskId, row.prompt);
+  const uploads = listTaskUploadAttachments(taskId);
+  insertUserMessage(taskId, row.prompt, uploads);
   publishUser(taskId, row.prompt);
   // 斜杠调用（如 /周报生成 主题）：落库与展示保留原文，发给模型的是技能正文展开；
   // context_note（附件清单/@ 引用）只随首轮发给模型，展示文本保持用户原文
   const context = row.context_note ? `\n\n${row.context_note}` : "";
-  const userPrompt = expandSkillSlash(row.prompt) + context;
-  const planPhase = !!row.high_risk;
-  const firstPrompt = planPhase ? `${HIGH_RISK_PLAN_INSTRUCTION}
+  const userPrompt = expandSkillSlash(row.prompt, row.agent_id) + context;
+  const planPhase = (parseAccessMode(row.access_mode) ?? "autonomous") === "plan";
+  const firstPrompt = planPhase
+    ? `${PLAN_MODE_INSTRUCTION}
 
-用户任务：${userPrompt}` : userPrompt;
+用户任务：${userPrompt}`
+    : userPrompt;
   beginTurn(taskId);
   try {
     const session = await ensureSession(row);
@@ -759,21 +906,26 @@ export async function startTask(taskId: string): Promise<void> {
  * 同步完成校验并启动异步轮次；返回值供路由映射 HTTP 状态。
  * contextNote（附件清单等机器上下文）只随本轮发给模型，展示文本保持用户原文。
  */
-export function sendMessage(taskId: string, prompt: string, contextNote = ""): "ok" | "busy" | "not-found" {
+export function sendMessage(
+  taskId: string,
+  prompt: string,
+  contextNote = "",
+  attachments?: UserMessageAttachment[]
+): "ok" | "busy" | "not-found" {
   const row = getRunRow(taskId);
   if (!row) return "not-found";
   const current = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string } | undefined;
   if (!current) return "not-found";
   if (busy.has(taskId) || current.status === "pending" || current.status === "running") return "busy";
 
-  insertUserMessage(taskId, prompt);
+  insertUserMessage(taskId, prompt, attachments);
   publishUser(taskId, prompt);
   beginTurn(taskId);
   const context = contextNote ? `\n\n${contextNote}` : "";
   void (async () => {
     try {
       const session = await ensureSession(row);
-      await runTurn(row, session, expandSkillSlash(prompt) + context);
+      await runTurn(row, session, expandSkillSlash(prompt, row.agent_id) + context);
     } catch (err) {
       failTurn(taskId, err);
     } finally {
@@ -795,8 +947,14 @@ export function approveTask(taskId: string, approvedItems: string[]): "ok" | "bu
   if (busy.has(taskId) || current.status === "pending" || current.status === "running") return "busy";
   if (current.status !== "awaiting_approval") return "not-found";
 
+  // 确认计划后升为自主模式，写工具闸门按新档位生效（无需重建会话）
+  const mode = parseAccessMode(row.access_mode) ?? "plan";
+  if (mode === "plan") {
+    db.prepare("UPDATE tasks SET access_mode = 'autonomous' WHERE id = ?").run(taskId);
+  }
+
   const list = approvedItems.map((item) => `- [x] ${item}`).join("\n");
-  const prompt = `[高风险审批] 用户已在界面上逐项确认执行清单，批准以下项目：
+  const prompt = `[计划确认] 用户已在界面上逐项确认执行清单，批准以下项目：
 ${list}
 
 请只执行以上已批准的项目，未列出的项目一律不要执行；执行完成后输出结果摘要。`;
@@ -843,13 +1001,80 @@ export function waitTaskIdle(taskId: string, timeoutMs = 30_000): Promise<boolea
   });
 }
 
+const RESTART_INTERRUPT_ERROR = "服务重启导致任务中断，请重新派发";
+
+function sessionFileFor(sessionId: string): string | undefined {
+  if (!sessionId || sessionId.includes("..") || sessionId.includes("/") || sessionId.includes("\\")) return undefined;
+  let names: string[];
+  try {
+    names = fs.readdirSync(paths.sessions);
+  } catch {
+    return undefined;
+  }
+  const name = names.find((item) => item.endsWith(`_${sessionId}.jsonl`));
+  return name ? path.join(paths.sessions, name) : undefined;
+}
+
+/** 进程被杀掉时，内存里的半成品回复来不及落库。从会话 JSONL 按轮次回补，时间插在对应问句后面。 */
+function backfillRestartReplies(): void {
+  const rows = db
+    .prepare(
+      `SELECT t.id, t.session_id AS sessionId
+       FROM tasks t
+       WHERE t.session_id IS NOT NULL
+         AND t.status = 'failed'
+         AND t.error = ?
+         AND (SELECT COUNT(*) FROM task_messages m WHERE m.task_id = t.id AND m.role = 'assistant')
+           < (SELECT COUNT(*) FROM task_messages m WHERE m.task_id = t.id AND m.role = 'user')`
+    )
+    .all(RESTART_INTERRUPT_ERROR) as Array<{ id: string; sessionId: string }>;
+  for (const row of rows) {
+    try {
+      const file = sessionFileFor(row.sessionId);
+      if (!file) continue;
+      const entries = fs
+        .readFileSync(file, "utf8")
+        .split(/\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as unknown);
+      const turns = transcriptsFromSessionEntries(entries);
+      const saved = db
+        .prepare("SELECT COUNT(*) AS n FROM task_messages WHERE task_id = ? AND role = 'assistant'")
+        .get(row.id) as { n: number };
+      const missing = turns.slice(saved.n);
+      if (!missing.length) continue;
+      const users = db
+        .prepare(
+          "SELECT created_at FROM task_messages WHERE task_id = ? AND role = 'user' ORDER BY created_at, rowid"
+        )
+        .all(row.id) as Array<{ created_at: string }>;
+      missing.forEach((turn, index) => {
+        const at = saved.n + index;
+        const prev = users[at]?.created_at ?? users[users.length - 1]?.created_at ?? now();
+        const next = users[at + 1]?.created_at;
+        const note = "本轮在完成前中断。";
+        insertAssistantMessage(
+          row.id,
+          withInterruptNote(turn.text, note),
+          turn,
+          createdAtAfter(prev, next)
+        );
+      });
+      console.log(`[runner] 已回补任务 ${row.id} 的 ${missing.length} 条中断回复`);
+    } catch (err) {
+      console.error(`[runner] 回补任务 ${row.id} 的中断回复失败`, err);
+    }
+  }
+}
+
 /** 服务启动时调用：上一进程遗留的 pending/running 任务已无活动会话，标记为失败；并为没有消息记录的旧任务补一条用户消息。 */
 export function sweepOrphanTasks(): void {
   // awaiting_approval 不在此列：任务停在清单确认页，重启后仍可批准继续（会话从 JSONL 恢复）
   const result = db
     .prepare("UPDATE tasks SET status = 'failed', error = ? WHERE status IN ('pending', 'running')")
-    .run("服务重启导致任务中断，请重新派发");
+    .run(RESTART_INTERRUPT_ERROR);
   if (result.changes > 0) console.log(`[runner] 已将 ${result.changes} 个中断任务标记为 failed`);
+  backfillRestartReplies();
 
   // 旧任务（多轮功能上线前创建）没有消息记录，补上首条用户消息，保证聊天视图完整
   db.prepare(

@@ -1,0 +1,16 @@
+{
+  "name": "@office/pi-document-ocr",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "扫描件 / 图片 OCR：调用内网 TextIn，把正文写成工作区 .parsed/ Markdown",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["extensions/*.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

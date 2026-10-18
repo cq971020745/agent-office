@@ -1,18 +1,26 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import type { AgentConfig, ModelOption, Task } from "@office/shared";
+import type { AccessMode, AgentConfig, ModelOption, Task } from "@office/shared";
 import { createTask, createTaskWithFiles, listAgents, listModelOptions, listTasks } from "../api";
 import { toast, toastError } from "../composables/toast";
 import { MAX_FILES, useAttachments } from "../composables/attachments";
 import { useMentions } from "../composables/useMentions";
 import { useSlashSkills } from "../composables/useSlashSkills";
 import { formatSize, timeAgo } from "../utils/format";
+import AccessModePicker from "../components/AccessModePicker.vue";
 import AgentAvatar from "../components/AgentAvatar.vue";
 import MentionChips from "../components/MentionChips.vue";
 import MentionPopup from "../components/MentionPopup.vue";
 import SkillPopup from "../components/SkillPopup.vue";
 import VoiceDictate from "../components/VoiceDictate.vue";
+
+const ACCESS_MODE_KEY = "ao.accessMode";
+function loadAccessMode(): AccessMode {
+  const raw = localStorage.getItem(ACCESS_MODE_KEY);
+  if (raw === "plan" || raw === "confirm" || raw === "autonomous" || raw === "full") return raw;
+  return "autonomous";
+}
 
 const router = useRouter();
 const route = useRoute();
@@ -22,6 +30,9 @@ const modelOptions = ref<ModelOption[]>([]);
 const agentId = ref("");
 const prompt = ref("");
 const busy = ref(false);
+const accessMode = ref<AccessMode>(loadAccessMode());
+
+watch(accessMode, (v) => localStorage.setItem(ACCESS_MODE_KEY, v));
 
 // ---------- 附件（随任务一起上传，落进任务工作区；支持拖入与 Ctrl+V 粘贴截图/文件） ----------
 const {
@@ -116,11 +127,13 @@ function closePlus(): void {
   agentMenuOpen.value = false;
 }
 
-/** 选中专家：预选其默认模型（没有则保留当前选择），关闭菜单 */
+/** 选中专家：预选其默认模型（没有则保留当前选择），关闭菜单；高风险专家默认切到计划模式 */
 function pickAgent(id: string): void {
   agentId.value = id;
   closePlus();
   syncModelWithAgent();
+  const agent = agents.value.find((a) => a.id === id);
+  if (agent?.highRisk) accessMode.value = "plan";
 }
 
 function clearAgent(): void {
@@ -211,14 +224,22 @@ function clearDirectory(): void {
   dirPath.value = "";
 }
 
+/** 侧栏「项目文件夹新建」或专家「发任务」带来的 query：预填工作目录与专家 */
+function applyDispatchQuery(): void {
+  const ws = typeof route.query.workspaceDir === "string" ? route.query.workspaceDir.trim() : "";
+  if (ws) dirPath.value = ws;
+  const fromQuery = typeof route.query.agent === "string" ? route.query.agent : "";
+  if (fromQuery && agents.value.some((a) => a.id === fromQuery)) {
+    agentId.value = fromQuery;
+    const agent = agents.value.find((a) => a.id === fromQuery);
+    if (agent?.highRisk) accessMode.value = "plan";
+  }
+}
+
 async function refresh(): Promise<void> {
   try {
     agents.value = await listAgents();
-    // 从专家页「发任务」跳转过来时按 query 预选；其余情况不默认选中，由用户显式挑选专家
-    const fromQuery = typeof route.query.agent === "string" ? route.query.agent : "";
-    if (fromQuery && agents.value.some((a) => a.id === fromQuery)) {
-      agentId.value = fromQuery;
-    }
+    applyDispatchQuery();
   } catch (err) {
     toastError(err, "加载专家失败");
   }
@@ -252,8 +273,17 @@ async function submit(): Promise<void> {
           model,
           workspaceDir: dirPath.value || undefined,
           mentions,
+          accessMode: accessMode.value,
         })
-      : await createTask(agentId.value, prompt.value.trim(), undefined, model, dirPath.value || undefined, mentions);
+      : await createTask(
+          agentId.value,
+          prompt.value.trim(),
+          undefined,
+          model,
+          dirPath.value || undefined,
+          mentions,
+          accessMode.value
+        );
     prompt.value = "";
     mention.pendingMentions.value = [];
     slash.state.open = false;
@@ -279,7 +309,7 @@ function onKeydown(e: KeyboardEvent): void {
 const taRef = ref<HTMLTextAreaElement | null>(null);
 const mention = useMentions({ prompt, taRef, onFallbackKey: onKeydown });
 // ---------- / 斜杠技能（键入 / 弹技能候选，与 @ 弹层互斥） ----------
-const slash = useSlashSkills({ prompt, taRef });
+const slash = useSlashSkills({ prompt, taRef, agentId });
 
 /** 弹层键盘链：/ 技能弹层优先，其次 @ 引用弹层，最后宿主（Ctrl+Enter 派发） */
 function onTaKeydown(e: KeyboardEvent): void {
@@ -309,13 +339,44 @@ function appendVoiceText(text: string): void {
   ta?.focus();
 }
 
-onMounted(refresh);
+const creatingSkill = computed(() => route.query.createSkill === "1" || route.query.createSkill === "true");
+const CREATE_SKILL_PROMPT =
+  "/skill-creator 我想创建一个新技能。请先通过对话问清用途、触发场景和成果物格式，确认方案后再用 write_skill 写入技能库，不要只写到任务工作区。";
+
+watch(
+  creatingSkill,
+  (on) => {
+    if (!on) return;
+    if (!prompt.value.trim()) prompt.value = CREATE_SKILL_PROMPT;
+    void nextTick(() => taRef.value?.focus());
+  },
+  { immediate: true }
+);
+
+// 已在首页时再次从侧栏「文件夹新建」跳入：同步工作目录/专家并聚焦输入框
+watch(
+  () => [route.query.workspaceDir, route.query.agent] as const,
+  () => {
+    applyDispatchQuery();
+    if (route.query.workspaceDir || route.query.agent) {
+      void nextTick(() => taRef.value?.focus());
+    }
+  }
+);
+
+onMounted(() => {
+  void refresh();
+  if (creatingSkill.value || route.query.workspaceDir) void nextTick(() => taRef.value?.focus());
+});
 </script>
 
 <template>
   <div class="home">
     <div class="hero">
-      <h1 class="title">Agent Office<br />把重复的工作交给 Agent</h1>
+      <h1 class="title">
+        <template v-if="creatingSkill">对话创建技能<br />先说清楚用途，确认后再写入技能库</template>
+        <template v-else>Agent Office<br />把重复的工作交给 Agent</template>
+      </h1>
 
       <div v-if="tasks.length" class="stats">
         <div class="stat">
@@ -359,7 +420,7 @@ onMounted(refresh);
             ref="taRef"
             v-model="prompt"
             rows="3"
-            placeholder="描述你要完成的任务，输入 @ 引用联系人 / 云文档，输入 / 调用技能，支持 Ctrl+V 粘贴截图…"
+            :placeholder="creatingSkill ? '补充你想做的技能（用途、触发说法、成果物），选好模型后发送…' : '描述你要完成的任务；可拖入文件，或 Ctrl+V 粘贴截图；输入 @ / 调用引用与技能'"
             @keydown="onTaKeydown"
             @input="detectPopups"
             @click="detectPopups"
@@ -389,7 +450,7 @@ onMounted(refresh);
             title="点击选择特定专家（未选时默认由「通用助手」执行）"
             @click="openAgentMenuDirect"
           >未选专家，将使用「通用助手」</span>
-          <span v-else class="agent-tag muted">暂无可用专家，请管理员在后台配置</span>
+          <span v-else class="agent-tag muted">暂无可用专家，可在专家页创建</span>
 
           <!-- WorkBuddy 式 + 菜单：添加文件 / 专家（专家不再平铺在页面，收纳到 + 里） -->
           <div class="plus-wrap">
@@ -477,6 +538,9 @@ onMounted(refresh);
               @click.stop="clearDirectory"
             >✕</span>
           </button>
+
+          <span class="toolbar-spacer" aria-hidden="true" />
+          <AccessModePicker v-model="accessMode" />
 
           <div class="model-select">
             <button
@@ -975,8 +1039,11 @@ onMounted(refresh);
   color: var(--danger);
   background: var(--danger-soft);
 }
-.model-select {
+.toolbar-spacer {
   margin-left: auto;
+}
+.model-select {
+  margin-left: 0;
 }
 .model-trigger {
   display: inline-flex;

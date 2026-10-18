@@ -137,6 +137,11 @@ describe("企业知识库登录", () => {
     assert.equal(memberRes.json().user.role, "member");
     const stillOrphan = db.prepare("SELECT user_id FROM model_providers WHERE id = 'orphan-p'").get() as { user_id: string | null };
     assert.equal(stillOrphan.user_id, null);
+    const memberTextIn = db
+      .prepare("SELECT name, ocr_model FROM model_providers WHERE user_id = ? AND ocr_model = 'textin'")
+      .get(memberRes.json().user.id as string) as { name: string; ocr_model: string } | undefined;
+    assert.equal(memberTextIn?.name, "TextIn OCR");
+    assert.equal(memberTextIn?.ocr_model, "textin");
 
     const adminRes = await app.inject({
       method: "POST",

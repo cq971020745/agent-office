@@ -1,17 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { API_BASE, getToken } from "../api";
+import { API_BASE, fetchKbEmbedTicket } from "../api";
 
 const src = ref("");
 const error = ref("");
 
 onMounted(async () => {
   try {
-    const res = await fetch(`${API_BASE}/kb-embed/ticket`, {
-      headers: { authorization: `Bearer ${getToken()}` },
-    });
-    if (!res.ok) throw new Error("无法打开企业知识库工作台");
-    const body = (await res.json()) as { ticket?: string };
+    const body = await fetchKbEmbedTicket();
     if (!body.ticket) throw new Error("无法打开企业知识库工作台");
     src.value = `${API_BASE}/kb-embed/open?ticket=${encodeURIComponent(body.ticket)}`;
   } catch (err) {

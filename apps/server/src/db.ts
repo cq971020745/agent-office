@@ -119,7 +119,7 @@ export function migrate(): void {
   } catch {
     // duplicate column name
   }
-  // V5：用户自选工作目录的任务（0 = 平台隔离工作区，1 = 用户选择的目录）
+  // V5：用户显式选择的工作目录（1 = 侧栏「项目」；0 = 未选手动目录，含专家常驻目录与平台隔离区）
   try {
     db.exec("ALTER TABLE tasks ADD COLUMN custom_workspace INTEGER NOT NULL DEFAULT 0");
   } catch {
@@ -316,6 +316,8 @@ export function migrate(): void {
     "ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE users ADD COLUMN nick_name TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE users ADD COLUMN kb_access_token TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE users ADD COLUMN kb_mcp_api_key TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE mcp_servers ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE model_providers ADD COLUMN user_id TEXT",
   ]) {
     try {
@@ -345,6 +347,43 @@ export function migrate(): void {
       UPDATE agents SET provider_id = NULL, model_id = NULL;
     `);
     db.prepare("INSERT INTO schema_flags (key, value) VALUES ('kb_user_cutover', ?)").run(now());
+  }
+
+  // V17：供应商显式绑定扫描件 OCR 视觉模型；留空则 ocr_to_md 使用开源 Tesseract.js
+  try {
+    db.exec("ALTER TABLE model_providers ADD COLUMN ocr_model TEXT NOT NULL DEFAULT ''");
+  } catch {
+    // duplicate column name
+  }
+
+  // V18：供应商对话协议。默认 Chat Completions，可改为 Anthropic Messages 或 Responses
+  try {
+    db.exec(
+      "ALTER TABLE model_providers ADD COLUMN api_format TEXT NOT NULL DEFAULT 'openai-completions'",
+    );
+  } catch {
+    // duplicate column name
+  }
+
+  // V19：任务会话权限档位（plan / confirm / autonomous / full），发送前选定
+  try {
+    db.exec("ALTER TABLE tasks ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'autonomous'");
+  } catch {
+    // duplicate column name
+  }
+
+  // V20：custom_workspace 只表示用户显式选目录。历史里跑在专家常驻目录（data/agents/...）的任务被误标为 1，挤进侧栏「项目」——清回 0。
+  {
+    const agentRoot = path.resolve(paths.agentFolders);
+    const sep = path.sep;
+    const rows = db
+      .prepare("SELECT id, workspace_path FROM tasks WHERE custom_workspace = 1")
+      .all() as { id: string; workspace_path: string }[];
+    const clear = db.prepare("UPDATE tasks SET custom_workspace = 0 WHERE id = ?");
+    for (const r of rows) {
+      const dir = path.resolve(r.workspace_path);
+      if (dir === agentRoot || dir.startsWith(agentRoot + sep)) clear.run(r.id);
+    }
   }
 }
 

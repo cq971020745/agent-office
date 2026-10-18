@@ -22,6 +22,7 @@ import {
   importMcpConfig,
   installAgentPack,
   installSkill,
+  installSkillPack,
   listAgents,
   listAdminAgents,
   listAdminProviders,
@@ -45,11 +46,12 @@ import { timeAgo } from "../utils/format";
 type Tab = "experts" | "skills" | "connectors" | "instructions";
 const tab = ref<Tab>("experts");
 const isAdmin = getRole() === "admin";
+const visibleTabs = computed(() => (isAdmin ? TABS : TABS.filter((item) => item.key !== "instructions")));
 
 const TABS: { key: Tab; label: string; hint: string }[] = [
-  { key: "experts", label: "专家", hint: "带专属提示词与模型的智能助手，可反复派发任务" },
-  { key: "skills", label: "技能", hint: "平台级能力包（SKILL.md），所有专家共享；模型按需加载，可用 /技能名 参数 直接调用" },
-  { key: "connectors", label: "连接器", hint: "接入 MCP 工具服务器（本地 stdio 或远程 streamable HTTP），其工具在本平台所有任务会话中可用" },
+  { key: "experts", label: "专家", hint: "带专属提示词的智能助手，可反复派发任务。登录后即可新建。" },
+  { key: "skills", label: "技能", hint: "能力包（SKILL.md）。可从市场、GitHub、zip 技能包或 ~/.agents 安装；新建走 skill-creator 对话。也可用 /技能名 直接调用。" },
+  { key: "connectors", label: "连接器", hint: "你自己的 MCP 连接器（本地 stdio 或远程 HTTP）。只在你的任务里生效。" },
   { key: "instructions", label: "平台指令", hint: "AGENTS.md 平台级全局指令：注入所有专家的任务会话，适合放统一的工作规范与安全约束" },
 ];
 
@@ -184,6 +186,11 @@ const TOOL_POLICY_BASE_ROWS: { key: string; label: string; desc: string }[] = [
   { key: "transcribe_audio", label: "音频文件转写", desc: "将工作区音频文件转写为文本（transcribe_audio）" },
   { key: "delegate_to_agent", label: "委派其他专家", desc: "将专项子任务委派给其他专家协同执行（delegate_to_agent）" },
   { key: "fetch_url", label: "网页抓取", desc: "从互联网拉取 URL 内容（fetch_url）" },
+  { key: "web_enable", label: "启用网页工具", desc: "按需开启网页检索工具集（web_enable；eager 模式下通常不出现）" },
+  { key: "web_search", label: "网页搜索", desc: "搜索公开互联网（web_search）" },
+  { key: "fetch_content", label: "网页内容抓取", desc: "抓取 URL / GitHub / PDF / 视频（fetch_content）" },
+  { key: "get_search_content", label: "读取检索缓存", desc: "按 responseId 读取已存储的检索结果（get_search_content）" },
+  { key: "source_check", label: "来源核验", desc: "为论断收集带引用的网页来源（source_check）" },
   { key: "run_code", label: "代码执行", desc: "在隔离沙箱运行代码（run_code，未启用代码执行时无需配置）" },
 ];
 
@@ -391,9 +398,7 @@ const sArgHint = ref("");
 const skillSaving = ref(false);
 
 function openCreateSkill(): void {
-  editingSkill.value = null;
-  sName.value = sDesc.value = sContent.value = sArgHint.value = "";
-  showSkillDialog.value = true;
+  void router.push({ path: "/", query: { createSkill: "1" } });
 }
 
 async function openEditSkill(name: string): Promise<void> {
@@ -471,7 +476,34 @@ const syncingName = ref("");
 const installSource = ref("");
 const installOverwrite = ref(false);
 
-const KIND_LABEL: Record<string, string> = { builtin: "内置", url: "链接", git: "Git", local: "本地" };
+const KIND_LABEL: Record<string, string> = { builtin: "内置", url: "链接", git: "Git", local: "本地", zip: "技能包" };
+const skillPackInput = ref<HTMLInputElement | null>(null);
+
+function pickSkillPack(): void {
+  skillPackInput.value?.click();
+}
+
+async function onSkillPackPicked(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  if (installingId.value) return;
+  installingId.value = "_pack";
+  try {
+    const res = await installSkillPack(file, installOverwrite.value);
+    const parts = [
+      res.added.length ? `新增 ${res.added.join("、")}` : "",
+      res.updated.length ? `覆盖更新 ${res.updated.join("、")}` : "",
+    ].filter(Boolean);
+    toast("success", parts.length ? `技能包已导入：${parts.join("；")}` : "技能包里没有可安装的技能");
+    await loadSkills();
+  } catch (err) {
+    toastError(err, "导入技能包失败");
+  } finally {
+    installingId.value = "";
+  }
+}
 
 /** 来源缩略显示：去协议头，过长截断 */
 function shortSource(src: string): string {
@@ -480,7 +512,6 @@ function shortSource(src: string): string {
 }
 
 async function loadSkills(): Promise<void> {
-  if (!isAdmin) return;
   skillsLoading.value = true;
   try {
     const [list, catalog] = await Promise.all([listSkills(), getSkillsCatalog()]);
@@ -572,10 +603,19 @@ async function doSyncAllSkills(): Promise<void> {
   syncingAll.value = true;
   try {
     const res = await syncAllSkills();
-    if (res.failed.length) {
-      toast("info", `已同步 ${res.sources.length} 个来源，${res.failed.length} 个失败：${res.failed.map((f) => f.source).join("、")}`);
+    const homeBits = res.home.missing
+      ? []
+      : [
+          res.home.added.length ? `~/.agents 新增 ${res.home.added.length}` : "",
+          res.home.updated.length ? `~/.agents 更新 ${res.home.updated.length}` : "",
+          res.home.skipped.length ? `~/.agents 跳过重名 ${res.home.skipped.length}` : "",
+        ].filter(Boolean);
+    if (res.home.missing && !res.sources.length && !res.failed.length) {
+      toast("info", `未找到 ${res.home.source}，其它来源也没有可同步的技能`);
+    } else if (res.failed.length) {
+      toast("info", `已同步 ${res.sources.length} 个来源${homeBits.length ? `（${homeBits.join("，")}）` : ""}，${res.failed.length} 个失败：${res.failed.map((f) => f.source).join("、")}`);
     } else {
-      toast("success", `已同步 ${res.sources.length} 个技能来源`);
+      toast("success", `已同步 ${res.sources.length} 个技能来源${homeBits.length ? `：${homeBits.join("，")}` : ""}`);
     }
     await loadSkills();
   } catch (err) {
@@ -607,7 +647,6 @@ const packChatModels = computed(() => {
 });
 
 async function loadPacks(): Promise<void> {
-  if (!isAdmin) return;
   try {
     agentPacks.value = await listAgentPacks();
   } catch {
@@ -721,7 +760,7 @@ async function submitExport(): Promise<void> {
   if (!exportTarget.value || exporting.value) return;
   exporting.value = true;
   try {
-    await exportAgentPack(exportTarget.value.id, exportSkills.value, `${exportTarget.value.name}.json`);
+    await exportAgentPack(exportTarget.value.id, exportSkills.value, `${exportTarget.value.name}.zip`);
     toast("success", "专家包已导出，可直接分享给其他平台导入");
     showExportDialog.value = false;
   } catch (err) {
@@ -751,7 +790,6 @@ const expanded = ref("");
 const mcpFileInput = ref<HTMLInputElement | null>(null);
 
 async function loadMcp(): Promise<void> {
-  if (!isAdmin) return;
   mcpLoading.value = true;
   try {
     servers.value = await listMcpServers();
@@ -1010,7 +1048,7 @@ onMounted(() => {
     <div class="head">
       <div class="seg">
         <button
-          v-for="t in TABS"
+          v-for="t in visibleTabs"
           :key="t.key"
           type="button"
           class="seg-btn"
@@ -1021,21 +1059,26 @@ onMounted(() => {
         </button>
       </div>
       <div class="head-actions">
-        <button v-if="isAdmin && tab === 'experts'" type="button" class="ghost-btn" @click="pickImportFile">
+        <button v-if="tab === 'experts'" type="button" class="ghost-btn" @click="pickImportFile">
           <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg>
           导入专家包
         </button>
-        <template v-if="isAdmin && tab === 'skills'">
+        <template v-if="tab === 'skills'">
           <button type="button" class="ghost-btn" title="对比技能源远端内容与本地基线，标记「有更新」" :disabled="checkingUpdates" @click="checkSkillUpdates">
             <svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" /></svg>
             {{ checkingUpdates ? "检查中…" : "检查更新" }}
           </button>
-          <button type="button" class="ghost-btn" title="逐个同步全部技能来源（失败的不阻塞其余来源）" :disabled="syncingAll" @click="doSyncAllSkills">
+          <button type="button" class="ghost-btn" title="逐个同步全部技能来源，并扫入用户 ~/.agents/skills" :disabled="syncingAll" @click="doSyncAllSkills">
             <svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" transform="rotate(180 12 12)" /></svg>
             {{ syncingAll ? "同步中…" : "全部同步" }}
           </button>
+          <button type="button" class="ghost-btn" title="导入含 SKILL.md 的 zip 技能包（不是专家包）" :disabled="!!installingId" @click="pickSkillPack">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg>
+            导入技能包
+          </button>
+          <input ref="skillPackInput" type="file" accept=".zip,application/zip" class="hidden-file" @change="onSkillPackPicked" />
         </template>
-        <template v-if="isAdmin && tab === 'connectors'">
+        <template v-if="tab === 'connectors'">
           <button type="button" class="ghost-btn" title="导入 Claude/Codex 风格的 .mcp.json（仅 stdio）" @click="pickMcpFile">
             <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg>
             导入 .mcp.json
@@ -1047,15 +1090,15 @@ onMounted(() => {
           <input ref="mcpFileInput" type="file" accept=".json,application/json" class="hidden-file" @change="onMcpFilePicked" />
         </template>
         <button
-          v-if="isAdmin && tab !== 'instructions'"
+          v-if="tab !== 'instructions'"
           type="button"
           class="new-btn"
           @click="tab === 'experts' ? openCreate() : tab === 'skills' ? openCreateSkill() : openCreateMcp()"
         >
           <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-          {{ tab === "experts" ? "新建专家" : tab === "skills" ? "新建技能" : "新建连接器" }}
+          {{ tab === "experts" ? "新建专家" : tab === "skills" ? "对话创建技能" : "新建连接器" }}
         </button>
-        <input ref="importInput" type="file" accept=".json,application/json" class="hidden-file" @change="onImportPicked" />
+        <input ref="importInput" type="file" accept=".zip,.json,application/zip,application/json" class="hidden-file" @change="onImportPicked" />
       </div>
     </div>
     <p class="tab-hint">{{ TABS.find((t) => t.key === tab)?.hint }}</p>
@@ -1083,10 +1126,10 @@ onMounted(() => {
       </div>
 
       <!-- 专家市场：内置专家包一键安装（也可从右上角导入分享包） -->
-      <div v-if="isAdmin && agentPacks.length" class="pack-strip">
+      <div v-if="agentPacks.length" class="pack-strip">
         <div class="pack-strip-head">
           <span class="pack-strip-title">专家市场</span>
-          <span class="pack-strip-hint">一键安装精选专家包，也可以从右上角「导入专家包」导入分享的 .json 包</span>
+          <span class="pack-strip-hint">一键安装精选专家包，也可以从右上角「导入专家包」导入分享的 .zip 包</span>
         </div>
         <div v-for="p in agentPacks" :key="p.id" class="pack-item">
           <div class="pack-info">
@@ -1107,7 +1150,6 @@ onMounted(() => {
           <div class="card-top">
             <div class="avatar" :style="{ background: avatarGrad(a.name) }">{{ a.name.slice(0, 1) }}</div>
             <button
-              v-if="isAdmin"
               type="button"
               class="more-btn"
               title="更多操作"
@@ -1157,20 +1199,19 @@ onMounted(() => {
         </div>
       </div>
       <div v-else class="empty">
-        {{ agents.length ? "没有匹配的专家" : "还没有专家，请管理员点击右上角「新建专家」创建" }}
+        {{ agents.length ? "没有匹配的专家" : "还没有专家，点击右上角「新建专家」或从专家市场安装" }}
       </div>
     </template>
 
     <!-- 技能 -->
     <template v-else-if="tab === 'skills'">
-      <div v-if="!isAdmin" class="empty">技能管理需要管理员权限</div>
-      <div v-else-if="skillsLoading" class="empty">加载中…</div>
+      <div v-if="skillsLoading" class="empty">加载中…</div>
       <template v-else>
         <!-- 技能市场：内置精选 + 任意来源（URL 直链 / Git 仓库 / 本机目录） -->
         <div class="market-card">
           <div class="market-head">
             <div class="market-title">技能市场</div>
-            <p class="market-hint">一键安装精选技能；也可从 URL、Git 仓库或本机目录安装，安装后可随时「同步」拉取更新。</p>
+            <p class="market-hint">一键安装精选技能；也可从 URL、GitHub 仓库、zip 技能包或本机目录安装。「全部同步」会扫入用户 ~/.agents/skills。</p>
           </div>
           <div v-if="skillCatalog.catalog.length" class="market-grid">
             <div v-for="c in skillCatalog.catalog" :key="c.id" class="market-item">
@@ -1187,7 +1228,7 @@ onMounted(() => {
           <div class="install-row">
             <input
               v-model="installSource"
-              placeholder="安装来源：https://…/SKILL.md 直链、Git 仓库地址（git:github.com/user/repo）或本机目录"
+              placeholder="安装来源：GitHub 地址、https://…/SKILL.md、zip 链接、本机目录/zip，或 agents:"
               @keydown.enter.prevent="submitInstallSource"
             />
             <label class="overwrite-toggle" title="同名技能将被覆盖更新">
@@ -1240,14 +1281,13 @@ onMounted(() => {
             </div>
           </div>
         </div>
-        <div v-else class="empty">还没有技能 —— 从上方「技能市场」安装，或点击右上角「新建技能」创建</div>
+        <div v-else class="empty">还没有技能 —— 从上方「技能市场」安装，导入技能包，或点右上角「对话创建技能」</div>
       </template>
     </template>
 
     <!-- 连接器 -->
     <template v-else-if="tab === 'connectors'">
-      <div v-if="!isAdmin" class="empty">连接器管理需要管理员权限</div>
-      <div v-else-if="mcpLoading" class="empty">加载中…</div>
+      <div v-if="mcpLoading" class="empty">加载中…</div>
       <div v-else-if="servers.length" class="conn-list">
         <div v-for="s in servers" :key="s.id" class="conn-card">
           <div class="conn-head">
@@ -1640,8 +1680,8 @@ onMounted(() => {
             </label>
             <p class="mcp-tip">
               {{ packMode === "import"
-                ? "导入会新建专家并随包安装技能；与现有重名的技能会自动改名（追加 -2），不会覆盖已有内容。"
-                : "安装会新建专家并随包安装技能；与现有重名的技能会自动改名（追加 -2），不会覆盖已有内容。" }}
+                ? "导入会新建专家。包里的技能只属于这位专家，不会出现在其他专家的会话里。"
+                : "安装会新建专家。包里的技能只属于这位专家，不会出现在其他专家的会话里。" }}
             </p>
             <div class="dialog-foot">
               <button type="button" class="ghost" @click="showPackDialog = false">取消</button>
@@ -1673,7 +1713,7 @@ onMounted(() => {
                 <span v-if="!skills.length" class="model-state">平台暂无技能可携带</span>
               </div>
             </div>
-            <p class="mcp-tip">专家包为 JSON 文件（office-agent-package 格式），包含专家配置与勾选的技能；对方通过「导入专家包」即可使用，模型在导入时再选择。</p>
+            <p class="mcp-tip">导出为 zip：内含专家清单和技能目录（含子文档与脚本）。这位专家自带的技能会自动打进包。对方导入后，这些技能只属于新专家。</p>
             <div class="dialog-foot">
               <button type="button" class="ghost" @click="showExportDialog = false">取消</button>
               <button type="button" class="primary" :disabled="exporting" @click="submitExport">

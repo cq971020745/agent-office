@@ -88,6 +88,20 @@ describe("P2-2 工具策略", () => {
     assert.equal(toolNeedsApproval({}, "terminal", false), true);
     assert.equal(toolNeedsApproval({}, "terminal", true), false);
     assert.equal(toolNeedsApproval({}, "workspace_read", false), false);
+    assert.equal(toolNeedsApproval({}, "write_skill", false), true);
+    assert.equal(toolNeedsApproval({}, "write_skill", true), false);
+  });
+
+  it("toolNeedsApproval：会话权限档位叠加（full / confirm / plan / autonomous）", () => {
+    assert.equal(toolNeedsApproval({}, "terminal", false, "full"), false);
+    assert.equal(toolNeedsApproval({}, "workspace_write", false, "full"), false);
+    assert.equal(toolNeedsApproval({ workspace_write: "ask" }, "workspace_write", false, "full"), false);
+    assert.equal(toolNeedsApproval({}, "workspace_write", false, "confirm"), true);
+    assert.equal(toolNeedsApproval({}, "workspace_read", false, "confirm"), false);
+    assert.equal(toolNeedsApproval({}, "terminal", false, "autonomous"), true);
+    assert.equal(toolNeedsApproval({}, "workspace_write", false, "autonomous"), false);
+    assert.equal(toolNeedsApproval({}, "workspace_write", false, "plan"), false);
+    assert.equal(toolNeedsApproval({}, "terminal", false, "plan"), false);
   });
 });
 
@@ -181,6 +195,50 @@ describe("P2-1 远程 MCP（streamable HTTP）", () => {
       const res = (await client.callTool("echo", { text: "你好" })) as { content: { text: string }[] };
       assert.equal(res.content[0].text, "echo:你好");
       assert.equal(seen.sessionId, "sess-42"); // 会话头在后续请求中自动携带
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("McpHttpClient：未先 listTools 时 callTool 也会先握手", async () => {
+    const methods: string[] = [];
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c: Buffer) => (body += c.toString("utf8")));
+      req.on("end", () => {
+        const msg = JSON.parse(body) as { id?: number; method?: string };
+        methods.push(msg.method ?? "");
+        if (msg.method === "initialize") {
+          res.writeHead(200, { "content-type": "application/json", "mcp-session-id": "sess-kb" });
+          res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }));
+          return;
+        }
+        if (msg.method === "notifications/initialized") {
+          res.writeHead(202).end();
+          return;
+        }
+        if (req.headers["mcp-session-id"] !== "sess-kb") {
+          res.writeHead(400).end("Session ID missing");
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { content: [{ type: "text", text: "spaces" }] },
+          })
+        );
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address() as { port: number };
+    const client = new McpHttpClient(`http://127.0.0.1:${addr.port}/mcp`, {}, 5, 5);
+    try {
+      const res = (await client.callTool("knowledge_list_spaces", {})) as { content: { text: string }[] };
+      assert.equal(res.content[0].text, "spaces");
+      assert.deepEqual(methods.slice(0, 3), ["initialize", "notifications/initialized", "tools/call"]);
     } finally {
       client.close();
       server.close();

@@ -1,0 +1,359 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: calendar
+run_py: skills/calendar/run.py
+schema_version: cli_reference.v1
+subcommands:
+  add-event-attendees:
+    usage: run.py add-event-attendees [-h] --user-ids USER_IDS [--notify NOTIFY]
+    positional:
+    - calendar_id
+    - event_id
+    options:
+    - --notify
+    - --user-ids
+    example: python skills/calendar/run.py add-event-attendees <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  add-event-rooms:
+    usage: run.py add-event-rooms [-h] --room-ids ROOM_IDS calendar_id event_id
+    positional:
+    - calendar_id
+    - event_id
+    options:
+    - --room-ids
+    example: python skills/calendar/run.py add-event-rooms <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  create-calendar:
+    usage: run.py create-calendar [-h] --title TITLE --color COLOR [--desc DESC]
+    positional: []
+    options:
+    - --color
+    - --confirm
+    - --desc
+    - --title
+    example: python skills/calendar/run.py create-calendar
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  create-event:
+    usage: run.py create-event [-h] --start-time START_TIME --end-time END_TIME
+    positional:
+    - calendar_id
+    options:
+    - --attach
+    - --attendee-ability
+    - --attendees
+    - --confirm
+    - --desc
+    - --end-time
+    - --free-busy-status
+    - --location
+    - --online-meeting
+    - --recurrence
+    - --reminders
+    - --start-time
+    - --title
+    - --visibility
+    example: python skills/calendar/run.py create-event <calendar_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  create-permission:
+    usage: run.py create-permission [-h] --user-id USER_ID --role
+    positional:
+    - calendar_id
+    options:
+    - --confirm
+    - --role
+    - --user-id
+    example: python skills/calendar/run.py create-permission <calendar_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  delete-calendar:
+    usage: run.py delete-calendar [-h] [--confirm] calendar_id
+    positional:
+    - calendar_id
+    options:
+    - --confirm
+    example: python skills/calendar/run.py delete-calendar <calendar_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  delete-event:
+    usage: run.py delete-event [-h] [--confirm] calendar_id event_id
+    positional:
+    - calendar_id
+    - event_id
+    options:
+    - --confirm
+    example: python skills/calendar/run.py delete-event <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  delete-event-attendees:
+    usage: run.py delete-event-attendees [-h] --attendee-ids ATTENDEE_IDS
+    positional:
+    - calendar_id
+    - event_id
+    options:
+    - --attendee-ids
+    - --confirm
+    - --notify
+    example: python skills/calendar/run.py delete-event-attendees <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  delete-event-rooms:
+    usage: run.py delete-event-rooms [-h] --room-ids ROOM_IDS [--confirm]
+    positional:
+    - calendar_id
+    - event_id
+    options:
+    - --confirm
+    - --room-ids
+    example: python skills/calendar/run.py delete-event-rooms <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  delete-permission:
+    usage: run.py delete-permission [-h] [--confirm] calendar_id permission_id
+    positional:
+    - calendar_id
+    - permission_id
+    options:
+    - --confirm
+    example: python skills/calendar/run.py delete-permission <calendar_id> <permission_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --permission-id
+    - --permission_id
+  free-busy:
+    usage: run.py free-busy [-h] --start-time START_TIME --end-time END_TIME
+    positional: []
+    options:
+    - --end-time
+    - --room-ids
+    - --start-time
+    - --user-ids
+    example: python skills/calendar/run.py free-busy
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  get-calendar:
+    usage: run.py get-calendar [-h] calendar_id
+    positional:
+    - calendar_id
+    options: []
+    example: python skills/calendar/run.py get-calendar <calendar_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  get-event:
+    usage: run.py get-event [-h] calendar_id event_id
+    positional:
+    - calendar_id
+    - event_id
+    options: []
+    example: python skills/calendar/run.py get-event <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  list-calendars:
+    usage: run.py list-calendars [-h] [--page-token PAGE_TOKEN]
+    positional: []
+    options:
+    - --all
+    - --page-size
+    - --page-token
+    example: python skills/calendar/run.py list-calendars
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-event-attendees:
+    usage: run.py list-event-attendees [-h] [--page-size PAGE_SIZE]
+    positional:
+    - calendar_id
+    - event_id
+    options:
+    - --page-size
+    - --page-token
+    example: python skills/calendar/run.py list-event-attendees <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  list-event-rooms:
+    usage: run.py list-event-rooms [-h] calendar_id event_id
+    positional:
+    - calendar_id
+    - event_id
+    options: []
+    example: python skills/calendar/run.py list-event-rooms <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id
+  list-events:
+    usage: run.py list-events [-h] --start-time START_TIME --end-time END_TIME
+    positional:
+    - calendar_id
+    options:
+    - --all
+    - --end-time
+    - --keyword
+    - --page-size
+    - --page-token
+    - --start-time
+    example: python skills/calendar/run.py list-events <calendar_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-permissions:
+    usage: run.py list-permissions [-h] [--page-size PAGE_SIZE]
+    positional:
+    - calendar_id
+    options:
+    - --page-size
+    - --page-token
+    example: python skills/calendar/run.py list-permissions <calendar_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-room-levels:
+    usage: run.py list-room-levels [-h] [--room-level-id ROOM_LEVEL_ID]
+    positional: []
+    options:
+    - --page-size
+    - --page-token
+    - --room-level-id
+    example: python skills/calendar/run.py list-room-levels
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  list-rooms:
+    usage: run.py list-rooms [-h] [--room-level-id ROOM_LEVEL_ID]
+    positional: []
+    options:
+    - --page-size
+    - --page-token
+    - --room-level-id
+    example: python skills/calendar/run.py list-rooms
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  update-calendar:
+    usage: run.py update-calendar [-h] [--title TITLE] [--color COLOR]
+    positional:
+    - calendar_id
+    options:
+    - --color
+    - --confirm
+    - --desc
+    - --title
+    example: python skills/calendar/run.py update-calendar <calendar_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+  update-event:
+    usage: run.py update-event [-h] [--title TITLE] [--desc DESC]
+    positional:
+    - calendar_id
+    - event_id
+    options:
+    - --attach
+    - --attendee-ability
+    - --attendees
+    - --confirm
+    - --desc
+    - --end-time
+    - --free-busy-status
+    - --location
+    - --online-meeting
+    - --recurrence
+    - --reminders
+    - --remove-attendees
+    - --start-time
+    - --title
+    - --visibility
+    example: python skills/calendar/run.py update-event <calendar_id> <event_id>
+    reject_options:
+    - --calendar-id
+    - --calendar_id
+    - --drive
+    - --drive-id
+    - --drive_id
+    - --event-id
+    - --event_id

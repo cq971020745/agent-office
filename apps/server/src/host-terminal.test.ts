@@ -45,6 +45,9 @@ describe("buildPreamble", () => {
     const withDocker = buildPreamble(false, true, true, false);
     assert.match(withDocker, /terminal tool/);
     assert.match(withDocker, /doc_to_md/);
+    assert.match(withDocker, /ocr_to_md/);
+    assert.match(withDocker, /web_search/);
+    assert.match(withDocker, /fetch_content/);
     assert.match(withDocker, /run_code tool/);
     assert.doesNotMatch(withDocker, /no shell access/);
     assert.match(withDocker, /uploaded attachments/);

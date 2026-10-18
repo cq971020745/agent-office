@@ -1,0 +1,29 @@
+# 由 eval/generate_cli_contracts.py 从 run.py 自动生成；勿手改。
+# 变更 run.py 参数后请执行: python3 eval/generate_cli_contracts.py --write
+skill: ai-docs
+run_py: skills/ai-docs/run.py
+schema_version: cli_reference.v1
+subcommands:
+  list-spaces:
+    usage: run.py list-spaces [-h] [--page-size PAGE_SIZE]
+    positional: []
+    options:
+    - --filter-status
+    - --page-size
+    - --page-token
+    example: python skills/ai-docs/run.py list-spaces
+    reject_options:
+    - --drive
+    - --drive-id
+    - --drive_id
+  recall:
+    usage: run.py recall [-h] --drive-id DRIVE_IDS [--topk TOPK] [--scene SCENE]
+    positional:
+    - query
+    options:
+    - --drive-id
+    - --scene
+    - --topk
+    example: python skills/ai-docs/run.py recall <query>
+    reject_options:
+    - --query

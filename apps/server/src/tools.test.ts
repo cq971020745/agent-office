@@ -94,6 +94,24 @@ describe("workspaceTools", () => {
     assert.equal(fs.readFileSync(path.join(root, "合同.docx")).equals(ole), true);
   });
 
+  it("workspace_read 对图片指向 ocr_to_md，对 PDF 同时提示扫描件走 OCR", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    fs.writeFileSync(path.join(root, "扫描.png"), png);
+    const image = await call("workspace_read", { path: "扫描.png" });
+    const imageText = (image.content[0] as { text: string }).text;
+    assert.match(imageText, /ocr_to_md/);
+    assert.doesNotMatch(imageText, /doc_to_md/);
+
+    fs.writeFileSync(path.join(root, "报告.pdf"), Buffer.from("%PDF-1.4 mock"));
+    const pdf = await call("workspace_read", { path: "报告.pdf" });
+    const pdfText = (pdf.content[0] as { text: string }).text;
+    assert.match(pdfText, /doc_to_md/);
+    assert.match(pdfText, /ocr_to_md/);
+  });
+
   it("workspace_edit 精确局部替换并拒绝未命中的 oldText", async () => {
     await call("workspace_write", { path: "doc.md", content: "第一段\n旧内容\n第三段" });
     const res = await call("workspace_edit", { path: "doc.md", oldText: "旧内容", newText: "新内容" });

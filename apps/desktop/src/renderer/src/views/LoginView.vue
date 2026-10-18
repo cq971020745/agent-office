@@ -6,11 +6,47 @@ import { fetchCaptcha, login, setToken, setUsername } from "../api";
 const router = useRouter();
 const username = ref("");
 const password = ref("");
+const showPassword = ref(false);
+const remember = ref(true);
 const code = ref("");
 const captchaUuid = ref("");
 const captchaImg = ref("");
 const error = ref("");
 const busy = ref(false);
+
+/** 本机记住账密（仅存此电脑 localStorage，方便下次登录） */
+const REMEMBER_KEY = "ao.rememberLogin";
+const USER_KEY = "ao.savedUsername";
+const PASS_KEY = "ao.savedPassword";
+
+function loadSavedLogin(): void {
+  try {
+    const on = localStorage.getItem(REMEMBER_KEY) === "1";
+    remember.value = on;
+    if (!on) return;
+    username.value = localStorage.getItem(USER_KEY) ?? "";
+    const enc = localStorage.getItem(PASS_KEY) ?? "";
+    password.value = enc ? decodeURIComponent(atob(enc)) : "";
+  } catch {
+    // ignore bad storage
+  }
+}
+
+function persistLogin(name: string, pwd: string): void {
+  try {
+    if (remember.value) {
+      localStorage.setItem(REMEMBER_KEY, "1");
+      localStorage.setItem(USER_KEY, name);
+      localStorage.setItem(PASS_KEY, btoa(encodeURIComponent(pwd)));
+    } else {
+      localStorage.removeItem(REMEMBER_KEY);
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(PASS_KEY);
+    }
+  } catch {
+    // ignore quota / private mode
+  }
+}
 
 async function refreshCaptcha(): Promise<void> {
   try {
@@ -24,6 +60,7 @@ async function refreshCaptcha(): Promise<void> {
 }
 
 onMounted(() => {
+  loadSavedLogin();
   void refreshCaptcha();
 });
 
@@ -41,6 +78,7 @@ async function submit(): Promise<void> {
   error.value = "";
   try {
     const res = await login(name, password.value, code.value.trim(), captchaUuid.value);
+    persistLogin(name, password.value);
     setToken(res.token);
     setUsername(res.user.username);
     void router.push("/");
@@ -106,7 +144,33 @@ const FEATURES = [
           <div class="field-head">
             <span>密码</span>
           </div>
-          <input v-model="password" type="password" placeholder="知识库密码" autocomplete="current-password" />
+          <div class="pwd-box">
+            <input
+              v-model="password"
+              :type="showPassword ? 'text' : 'password'"
+              placeholder="知识库密码"
+              autocomplete="current-password"
+            />
+            <button
+              type="button"
+              class="pwd-eye"
+              :title="showPassword ? '隐藏密码' : '显示密码'"
+              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+              :aria-pressed="showPassword"
+              @click="showPassword = !showPassword"
+            >
+              <svg v-if="showPassword" class="icon" viewBox="0 0 24 24">
+                <path d="M3 3l18 18" />
+                <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+                <path d="M9.9 5.1A10.8 10.8 0 0 1 12 5c5.5 0 9.5 4.2 10.5 7-1 2.7-3.2 5-6.1 6.3" />
+                <path d="M6.1 6.1C3.9 7.6 2.3 9.7 1.5 12c1 2.8 5 7 10.5 7 1.3 0 2.5-.2 3.6-.7" />
+              </svg>
+              <svg v-else class="icon" viewBox="0 0 24 24">
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
         </div>
         <label>
           <span>验证码</span>
@@ -117,6 +181,10 @@ const FEATURES = [
               <span v-else>获取验证码</span>
             </button>
           </span>
+        </label>
+        <label class="remember">
+          <input v-model="remember" type="checkbox" />
+          <span>记住账号密码（仅保存在本机）</span>
         </label>
         <button class="primary" type="submit" :disabled="busy">登 录</button>
         <p v-if="error" class="error">{{ error }}</p>
@@ -276,6 +344,45 @@ label span,
   justify-content: space-between;
   gap: 8px;
 }
+.pwd-box {
+  position: relative;
+}
+.pwd-box input {
+  padding-right: 40px;
+}
+.pwd-eye {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+}
+.pwd-eye:hover {
+  color: var(--text);
+  background: transparent;
+  border-color: transparent;
+}
+.pwd-eye:active {
+  transform: none;
+}
+.pwd-eye .icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .forgot {
   border: none;
   background: none;
@@ -311,6 +418,23 @@ label span,
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.remember {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.remember input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
 }
 .error {
   margin: 0;

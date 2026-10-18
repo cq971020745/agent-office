@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { currentUser, upsertKbUser } from "../auth.js";
-import { loadKbCaptcha, loginKbAccount } from "../kb-auth.js";
+import { currentUser, saveKbMcpApiKey, upsertKbUser } from "../auth.js";
+import { fetchKbMcpApiKey, loadKbCaptcha, loginKbAccount } from "../kb-auth.js";
 
 const GONE = "密码由企业知识库管理，本应用不再注册或修改密码";
 
@@ -81,6 +81,12 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       });
       loginFails.delete(key);
       const user = upsertKbUser(session);
+      try {
+        const mcpKey = await fetchKbMcpApiKey(session.accessToken);
+        if (mcpKey) saveKbMcpApiKey(user.id, mcpKey);
+      } catch {
+        console.warn("[auth] 未能读取当前用户的知识库 MCP API Key");
+      }
       const token = app.jwt.sign({ sub: user.id, role: user.role });
       return reply.send({ token, user: { id: user.id, username: user.username, role: user.role } });
     } catch (err) {

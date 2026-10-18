@@ -3,8 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { showServerStartError, startBundledServer, stopBundledServer } from "./server-host.js";
+import { APP_NAME, APP_SLOGAN, APP_TAGLINE } from "../brand.js";
 
 // scoped 包名 @office/desktop 会让 userData 变成 Roaming\@office/desktop（含 /），Windows 上写数据会失败
+// 目录名保留历史 "Agent Office"，避免升级后丢失本机数据
 if (app.isPackaged) {
   app.setPath("userData", path.join(app.getPath("appData"), "Agent Office"));
 }
@@ -53,13 +55,13 @@ function buildChineseMenu(): void {
       label: "帮助",
       submenu: [
         {
-          label: "关于 Agent Office",
+          label: `关于 ${APP_NAME}`,
           click: () => {
             void dialog.showMessageBox({
               type: "info",
               title: "关于",
-              message: "Agent Office",
-              detail: "AI 数字员工办公室 · 把工作交给 Agent",
+              message: APP_NAME,
+              detail: `${APP_TAGLINE} · ${APP_SLOGAN}`,
               buttons: ["好的"],
               noLink: true,
             });
@@ -75,7 +77,7 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1240,
     height: 820,
-    title: "Agent Office",
+    title: APP_NAME,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

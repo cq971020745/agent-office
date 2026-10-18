@@ -21,6 +21,7 @@ import {
   cancelTask,
   dropTask,
   invalidateSession,
+  peekContextUsage,
   sendMessage,
   startTask,
   waitTaskIdle,
@@ -32,6 +33,15 @@ import { getAgentSkillBinding } from "../skills.js";
 import { moveFile, stageMultipartFiles, uniqueTargetPath, attachmentNote, type StagedUpload } from "../uploads.js";
 import { buildMentionsNote, parseMentionsField, sanitizeMentions } from "../mentions.js";
 import { listWorkspaceEntries, resolveInsideWorkspace } from "../workspace-tree.js";
+import {
+  checkoutBranch,
+  commitAll,
+  createAndCheckoutBranch,
+  getGitStatus,
+  listGitBranches,
+  listGitLog,
+  pushCurrent,
+} from "../git-workspace.js";
 
 /** 审批流在任务时间线里留痕（拒绝/取消），复用 runner 的消息表结构。 */
 function insertMessage(taskId: string, role: "user", content: string): void {
@@ -115,6 +125,30 @@ function getTaskRow(id: string): TaskRow | undefined {
 function canAccess(req: FastifyRequest, row: TaskRow): boolean {
   const user = currentUser(req);
   return user.role === "admin" || row.user_id === user.id;
+}
+
+/** 工作区预览：按扩展名给出浏览器可识别的 MIME（图片须正确，否则 <img> 破损） */
+function mimeForFilename(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  const map: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".htm": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+  };
+  return map[ext] ?? "application/octet-stream";
 }
 
 // ---------- 附件上传（净化/去重/暂存在 uploads.ts，这里只管落库与落盘） ----------
@@ -510,6 +544,101 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     return toTaskDto(row);
   });
 
+  /** 任务会话上下文占用（会话框底部展示） */
+  app.get("/tasks/:id/context-usage", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const usage = peekContextUsage(id);
+    if (!usage) return reply.code(404).send({ error: "context usage unavailable" });
+    return usage;
+  });
+
+  /** 任务工作区 Git 概览；非仓库返回 { repo: false } */
+  app.get("/tasks/:id/git", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    try {
+      return await getGitStatus(row.workspace_path);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get("/tasks/:id/git/branches", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    try {
+      return { items: await listGitBranches(row.workspace_path) };
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get("/tasks/:id/git/log", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const q = req.query as { limit?: string };
+    const limit = q.limit ? Number(q.limit) : 40;
+    try {
+      return { items: await listGitLog(row.workspace_path, Number.isFinite(limit) ? limit : 40) };
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/tasks/:id/git/checkout", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const branch = (req.body as { branch?: string })?.branch?.trim() ?? "";
+    if (!branch) return reply.code(400).send({ error: "请指定分支" });
+    try {
+      return await checkoutBranch(row.workspace_path, branch);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/tasks/:id/git/branch", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const branch = (req.body as { branch?: string })?.branch?.trim() ?? "";
+    if (!branch) return reply.code(400).send({ error: "请输入新分支名" });
+    try {
+      return await createAndCheckoutBranch(row.workspace_path, branch);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/tasks/:id/git/commit", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    const message = (req.body as { message?: string })?.message ?? "";
+    try {
+      return await commitAll(row.workspace_path, message);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/tasks/:id/git/push", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = getTaskRow(id);
+    if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
+    try {
+      return await pushCurrent(row.workspace_path);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   /** 追问前可改会话权限；闸门执行时现查，下一跳立即生效。 */
   app.patch("/tasks/:id/access-mode", { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -871,8 +1000,11 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     const stat = fs.lstatSync(abs);
     if (!stat.isFile() || stat.isSymbolicLink()) return reply.code(400).send({ error: "不是可预览的文件" });
     const filename = path.basename(abs);
-    reply.header("content-type", "application/octet-stream");
-    reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    // 图片必须正确 MIME + inline，否则对话气泡 <img> 会显示破损（历史标注截图同理）
+    const ctype = mimeForFilename(filename);
+    reply.header("content-type", ctype);
+    const disposition = ctype.startsWith("image/") ? "inline" : "attachment";
+    reply.header("content-disposition", `${disposition}; filename*=UTF-8''${encodeURIComponent(filename)}`);
     return reply.send(fs.createReadStream(abs));
   });
 

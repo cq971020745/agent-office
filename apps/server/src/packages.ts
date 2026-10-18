@@ -21,8 +21,11 @@ const BUILTIN_PACKAGES: ReadonlyArray<{ id: string; dirName: string }> = [
 
 /**
  * 外部 Pi 包。版本钉死，兼容当前 Node 22。
+ * 对外客户端只认这里声明的包（写入平台 agentDir），不认操作者本机 ~/.pi。
  * pi-quiver 只启用 doc_to_md，避免把它的 fetch、Slack、会话装饰一并加载。
  * pi-web-access 提供 web_search / fetch_content / get_search_content / source_check。
+ * pi-smart-context：智能压缩工具 + 阈值提醒（deferred compact_context，需 +tool_search）。
+ * 终端 TUI 专用包（statusbar / sidebar / pi-git-ui）不进此列表——桌面已有等价 UI。
  */
 const EXTERNAL_PACKAGES: readonly PiPackageDeclaration[] = [
   {
@@ -33,6 +36,7 @@ const EXTERNAL_PACKAGES: readonly PiPackageDeclaration[] = [
     themes: [],
   },
   { source: "npm:pi-web-access@0.42.0" },
+  { source: "npm:@zhushanwen/pi-smart-context@0.3.9" },
 ];
 
 export interface PiPackageDeclaration {
@@ -165,6 +169,8 @@ export function installPiPackages(cwd: string = process.cwd()): InstallResult {
   }
   const settingsPath = path.join(paths.agentDir, "settings.json");
   for (const spec of EXTERNAL_PACKAGES) declarePiPackage(settingsPath, spec);
+  ensureToolSearchDefault();
+  ensureSmartContextConfig();
   return { installed, skipped };
 }
 
@@ -189,6 +195,60 @@ export function ensureWebSearchConfig(): void {
   fs.writeFileSync(configPath, `${JSON.stringify({ toolActivation: "eager" }, null, 2)}\n`, "utf8");
 }
 
+/** smart-context 配置：不覆盖已有文件；空 compactModel 表示 same-model 压缩。 */
+export function ensureSmartContextConfig(): void {
+  const configDir = path.join(paths.agentDir, "config");
+  const configPath = path.join(configDir, "smart-context-ext-config.json");
+  if (fs.existsSync(configPath)) return;
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        enabled: true,
+        compactModel: { type: "ref", ref: "" },
+        reminderThresholds: [100000, 150000, 180000],
+        excludedModels: [],
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+}
+
+/**
+ * 增量开启 tool_search，供 deferred 工具（如 smart-context 的 compact_context）被检索激活。
+ * 不覆盖用户已显式配置的 defaultTools。
+ */
+export function ensureToolSearchDefault(): void {
+  const settingsPath = path.join(paths.agentDir, "settings.json");
+  let settings: { defaultTools?: unknown; [key: string]: unknown } = {};
+  let rawExisting = "";
+  if (fs.existsSync(settingsPath)) {
+    try {
+      rawExisting = fs.readFileSync(settingsPath, "utf8");
+      settings = JSON.parse(rawExisting) as typeof settings;
+    } catch {
+      settings = {};
+    }
+  }
+  const tools = Array.isArray(settings.defaultTools)
+    ? settings.defaultTools.filter((t): t is string => typeof t === "string")
+    : [];
+  if (tools.some((t) => t === "tool_search" || t === "+tool_search")) return;
+  tools.push("+tool_search");
+  settings.defaultTools = tools;
+  const nextContent = `${JSON.stringify(settings, null, 2)}\n`;
+  if (rawExisting === nextContent) return;
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  try {
+    fs.writeFileSync(settingsPath, nextContent, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== "EBUSY") throw err;
+  }
+}
+
 /**
  * 把已声明、尚未落地的 npm Pi 包装进 agentDir。声明本身由 installPiPackages 写入。
  * 离线或单个包失败时只记日志，其余包仍安装；任务可运行，缺的是对应工具。
@@ -197,6 +257,8 @@ export async function ensureExternalPiPackages(cwd: string = process.cwd()): Pro
   const ready: string[] = [];
   const failed: Array<{ source: string; error: string }> = [];
   ensureWebSearchConfig();
+  ensureSmartContextConfig();
+  ensureToolSearchDefault();
   if (offlineMode()) return { ready, failed };
   const settings = SettingsManager.create(cwd, paths.agentDir);
   const manager = new DefaultPackageManager({ cwd, agentDir: paths.agentDir, settingsManager: settings });

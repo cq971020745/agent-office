@@ -561,9 +561,48 @@ export interface UpdateScheduledTaskRequest {
   enabled?: boolean;
 }
 
+/** 任务会话上下文占用（来自 pi AgentSession.getContextUsage） */
+export interface TaskContextUsage {
+  /** 当前估计占用 token；压缩后下一轮前可能为 null */
+  tokens: number | null;
+  /** 模型上下文窗口 */
+  contextWindow: number;
+  /** 占用百分比；tokens 未知时为 null */
+  percent: number | null;
+}
+
+/** 任务工作区 Git 概览（非仓库时 repo=false） */
+export interface TaskGitStatus {
+  repo: boolean;
+  branch?: string;
+  /** 脏文件数（含未跟踪） */
+  dirtyFiles?: number;
+  insertions?: number;
+  deletions?: number;
+  ahead?: number;
+  behind?: number;
+}
+
+export interface TaskGitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+}
+
+export interface TaskGitCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  relativeTime: string;
+  /** git log --graph 行首图形（可能含 ANSI 已剥除） */
+  graph: string;
+}
+
 /** SSE 事件封套：pi 原始事件原样透传（type + 载荷），任务生命周期事件由平台注入。 */
 export type TaskEventEnvelope =
   | { seq: number; kind: "pi"; event: { type: string; [key: string]: unknown } }
   | { seq: number; kind: "task"; status: TaskStatus; error?: string }
   | { seq: number; kind: "user"; text: string }
-  | { seq: number; kind: "deliverables"; deliverables: Deliverable[] };
+  | { seq: number; kind: "deliverables"; deliverables: Deliverable[] }
+  | { seq: number; kind: "context"; usage: TaskContextUsage };

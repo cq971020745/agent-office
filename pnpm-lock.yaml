@@ -7,17 +7,16 @@ settings:
 
 importers:
 
-  .:
-    devDependencies:
-      '@electron/rebuild':
-        specifier: 4.0.3
-        version: 4.0.3
+  .: {}
 
   apps/desktop:
     dependencies:
       '@office/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      gsap:
+        specifier: 3.15.0
+        version: 3.15.0
       vue:
         specifier: ^3.5.13
         version: 3.5.43(typescript@5.9.3)
@@ -2051,6 +2050,9 @@ packages:
   grok-mermaid@0.2.3:
     resolution: {integrity: sha512-/4KopAbsjvuRP9MdPtlDjOHUmUVEohOX73JNcsWpzAtFxh+bq5+Dhb6gzvRieLDwIPQIR3/vy8V1NNTuz4Zsmg==}
     engines: {node: '>=18'}
+
+  gsap@3.15.0:
+    resolution: {integrity: sha512-dMW4CWBTUK1AEEDeZc1g4xpPGIrSf9fJF960qbTZmN/QwZIWY5wgliS6JWl9/25fpTGJrMRtSjGtOmPnfjZB+A==}
 
   guid-typescript@1.0.9:
     resolution: {integrity: sha512-Y8T4vYhEfwJOTbouREvG+3XDsjr8E3kIr7uf+JZ0BYloFsttiHU0WfvANVsR7TxNUJa/WpCnw/Ino/p+DeBhBQ==}
@@ -5367,6 +5369,8 @@ snapshots:
   graceful-fs@4.2.11: {}
 
   grok-mermaid@0.2.3: {}
+
+  gsap@3.15.0: {}
 
   guid-typescript@1.0.9: {}
 

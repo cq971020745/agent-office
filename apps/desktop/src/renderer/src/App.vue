@@ -19,6 +19,14 @@ import Toasts from "./components/Toasts.vue";
 import ConfirmHost from "./components/ConfirmHost.vue";
 import { confirmDialog } from "./composables/confirm";
 import { toast, toastError } from "./composables/toast";
+import ThemePicker from "./components/ThemePicker.vue";
+import FxLayer from "./components/FxLayer.vue";
+import { APP_MARK, APP_NAME, APP_TAGLINE } from "./brand";
+import { useTheme } from "./composables/useTheme";
+import { useMicroFx } from "./composables/useMicroFx";
+
+const { fxEnabled } = useTheme();
+useMicroFx(fxEnabled);
 
 type ProjectGroup = { key: string; name: string; path: string; tasks: Task[] };
 
@@ -28,15 +36,6 @@ const loggedIn = computed(() => route.path !== "/login" && !!getToken());
 // route.path 作为响应式依赖，确保同一应用进程切换账号后角色与用户名立即刷新。
 const isAdmin = computed(() => route.path !== "/login" && getRole() === "admin");
 const username = computed(() => (route.path === "/login" ? "用户" : getUsername() || "用户"));
-
-const theme = ref<"light" | "dark">(
-  document.documentElement.dataset.theme === "dark" ? "dark" : "light"
-);
-function toggleTheme(): void {
-  theme.value = theme.value === "dark" ? "light" : "dark";
-  document.documentElement.dataset.theme = theme.value;
-  localStorage.setItem("agent-office-theme", theme.value);
-}
 
 const sidebarCollapsed = ref(localStorage.getItem("agent-office-sidebar-collapsed") === "1");
 function toggleSidebar(): void {
@@ -131,10 +130,21 @@ function onVisibilityChange(): void {
 
 onMounted(refreshRecent);
 onMounted(() => {
+  // 清掉外观面板旧实现残留的全屏层（会吞掉侧栏 RouterLink 点击）
+  document.querySelectorAll(".theme-layer, .theme-backdrop").forEach((el) => el.remove());
   document.addEventListener("visibilitychange", onVisibilityChange);
   document.addEventListener("click", closeProjectMenu);
 });
-watch(() => route.path, refreshRecent);
+watch(
+  () => route.path,
+  () => {
+    // 路由切换时清掉可能残留的全屏挡板 / 拖拽态，避免侧栏点击失灵
+    document.querySelectorAll(".theme-layer, .theme-backdrop").forEach((el) => el.remove());
+    document.body.classList.remove("col-resizing");
+    projectMenuKey.value = "";
+    void refreshRecent();
+  }
+);
 watch(
   () => (typeof route.params.id === "string" ? route.params.id : ""),
   (id) => {
@@ -260,6 +270,13 @@ const wpsProfile = ref<WpsProfile | null>(null);
 const roleLabel = computed(() => (isAdmin.value ? "管理员" : "成员"));
 const accountDisplayName = computed(() => wpsProfile.value?.name || username.value);
 
+watch(
+  () => route.path,
+  () => {
+    wpsOpen.value = false;
+  }
+);
+
 async function refreshWpsProfile(): Promise<void> {
   const res = await getWpsMe();
   wpsConfigured.value = res.configured;
@@ -309,13 +326,14 @@ async function submitWpsSync(): Promise<void> {
 
 <template>
   <div class="shell">
+    <FxLayer />
     <aside v-if="loggedIn" class="sidebar" :class="{ collapsed: sidebarCollapsed }">
       <div class="brand-row">
-        <RouterLink to="/" class="brand" :title="sidebarCollapsed ? 'Agent Office' : undefined">
-          <span class="logo">A</span>
+        <RouterLink to="/" class="brand" :title="sidebarCollapsed ? APP_NAME : undefined">
+          <span class="logo">{{ APP_MARK }}</span>
           <span v-if="!sidebarCollapsed" class="brand-text">
-            <span class="name">Agent Office</span>
-            <span class="ver">AI 数字员工办公室</span>
+            <span class="name">{{ APP_NAME }}</span>
+            <span class="ver">{{ APP_TAGLINE }}</span>
           </span>
         </RouterLink>
         <button
@@ -423,17 +441,18 @@ async function submitWpsSync(): Promise<void> {
           <span>最近任务</span>
           <span class="count">{{ recentTasks.length }}</span>
         </div>
-        <RouterLink
+        <a
           v-for="t in recentTasks"
           :key="t.id"
-          :to="`/tasks/${t.id}`"
+          href="#"
           class="task-item"
-          active-class="current"
+          :class="{ current: route.path === `/tasks/${t.id}` }"
+          @click.prevent="void router.push(`/tasks/${t.id}`)"
         >
           <span class="dot" :class="t.status" />
           <span class="task-title">{{ t.title || "（无标题）" }}</span>
           <span class="task-time">{{ timeAgo(t.createdAt) }}</span>
-        </RouterLink>
+        </a>
         <RouterLink to="/tasks" class="see-all">查看全部 →</RouterLink>
       </div>
       </div>
@@ -454,20 +473,7 @@ async function submitWpsSync(): Promise<void> {
             </span>
           </span>
         </button>
-        <button
-          class="icon-btn"
-          :title="theme === 'dark' ? '切换到浅色' : '切换到深色'"
-          :aria-label="theme === 'dark' ? '切换到浅色' : '切换到深色'"
-          @click="toggleTheme"
-        >
-          <svg v-if="theme === 'dark'" class="icon" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="4" />
-            <path d="M12 2.5v2M12 19.5v2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M2.5 12h2M19.5 12h2M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
-          </svg>
-          <svg v-else class="icon" viewBox="0 0 24 24">
-            <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
-          </svg>
-        </button>
+        <ThemePicker variant="compact" />
         <button
           class="icon-btn"
           title="账号与 WPS 用户信息"
@@ -537,10 +543,21 @@ async function submitWpsSync(): Promise<void> {
 
 <style scoped>
 .shell {
+  position: relative;
   display: flex;
   height: 100vh;
   overflow: hidden;
   background: var(--bg);
+  isolation: isolate;
+}
+/* 侧栏高于主区，保证外观面板向右飞出时可点、且不被 content 盖住 */
+.shell > .sidebar {
+  position: relative;
+  z-index: 2;
+}
+.shell > .content {
+  position: relative;
+  z-index: 1;
 }
 .sidebar {
   width: 248px;
@@ -597,13 +614,36 @@ async function submitWpsSync(): Promise<void> {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: linear-gradient(135deg, #177e5b, #2f9d75);
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
   font-weight: 800;
-  font-size: 15px;
+  font-size: 14px;
+  line-height: 1;
   display: grid;
   place-items: center;
-  box-shadow: 0 2px 8px rgba(23, 126, 91, 0.35);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.35);
+}
+:root[data-theme="glass"] .sidebar {
+  background: var(--sidebar-bg);
+  border-right-color: var(--border);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+:root[data-theme="glass"] .shell {
+  background: transparent;
+}
+:root[data-theme="glass"] .content {
+  background: transparent;
+}
+:root[data-theme="glass"] .nav-item.active {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border-faint);
+}
+:root[data-theme="glass"] .overlay .dialog {
+  background: var(--glass-panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .brand-text {
   display: flex;
@@ -912,11 +952,14 @@ async function submitWpsSync(): Promise<void> {
   flex: 1;
 }
 .user {
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 5px;
   padding: 10px 4px 2px;
   border-top: 1px solid var(--border);
+  overflow: visible;
 }
 .user-identity {
   flex: 1;
@@ -941,8 +984,8 @@ async function submitWpsSync(): Promise<void> {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #177e5b, #2f9d75);
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
   font-size: 13px;
   font-weight: 700;
   display: grid;

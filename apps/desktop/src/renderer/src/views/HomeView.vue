@@ -14,6 +14,7 @@ import MentionChips from "../components/MentionChips.vue";
 import MentionPopup from "../components/MentionPopup.vue";
 import SkillPopup from "../components/SkillPopup.vue";
 import VoiceDictate from "../components/VoiceDictate.vue";
+import { APP_MARK, APP_NAME, APP_SLOGAN } from "../brand";
 
 const ACCESS_MODE_KEY = "ao.accessMode";
 function loadAccessMode(): AccessMode {
@@ -162,11 +163,45 @@ function goExperts(): void {
 function onPlusKey(e: KeyboardEvent): void {
   if (e.key === "Escape") closePlus();
 }
+function onPlusPointerDown(e: PointerEvent): void {
+  const t = e.target as Node;
+  if (plusTrigger.value?.contains(t)) return;
+  if ((e.target as HTMLElement | null)?.closest?.(".plus-pop")) return;
+  closePlus();
+}
+function onModelKey(e: KeyboardEvent): void {
+  if (e.key === "Escape") modelOpen.value = false;
+}
+function onModelPointerDown(e: PointerEvent): void {
+  const t = e.target as Node;
+  if (modelTrigger.value?.contains(t)) return;
+  if ((e.target as HTMLElement | null)?.closest?.(".model-pop")) return;
+  modelOpen.value = false;
+}
 watch(plusOpen, (open) => {
-  if (open) window.addEventListener("keydown", onPlusKey);
-  else window.removeEventListener("keydown", onPlusKey);
+  if (open) {
+    window.addEventListener("keydown", onPlusKey);
+    document.addEventListener("pointerdown", onPlusPointerDown);
+  } else {
+    window.removeEventListener("keydown", onPlusKey);
+    document.removeEventListener("pointerdown", onPlusPointerDown);
+  }
 });
-onBeforeUnmount(() => window.removeEventListener("keydown", onPlusKey));
+watch(modelOpen, (open) => {
+  if (open) {
+    window.addEventListener("keydown", onModelKey);
+    document.addEventListener("pointerdown", onModelPointerDown);
+  } else {
+    window.removeEventListener("keydown", onModelKey);
+    document.removeEventListener("pointerdown", onModelPointerDown);
+  }
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onPlusKey);
+  window.removeEventListener("keydown", onModelKey);
+  document.removeEventListener("pointerdown", onPlusPointerDown);
+  document.removeEventListener("pointerdown", onModelPointerDown);
+});
 
 /** 恢复上次在本机选过、且仍在当前用户模型列表里的模型；否则取第一个可用模型。 */
 function syncModelWithAgent(): void {
@@ -302,7 +337,12 @@ function useTemplate(text: string): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") void submit();
+  // 中文输入法选词的 Enter 不当作发送；Shift+Enter 换行
+  if (e.isComposing) return;
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    void submit();
+  }
 }
 
 // ---------- @ 引用（Comate 式：弹层候选 + 通讯录分组 + 云文档选择器，追问输入框共用同一套） ----------
@@ -311,7 +351,7 @@ const mention = useMentions({ prompt, taRef, onFallbackKey: onKeydown });
 // ---------- / 斜杠技能（键入 / 弹技能候选，与 @ 弹层互斥） ----------
 const slash = useSlashSkills({ prompt, taRef, agentId });
 
-/** 弹层键盘链：/ 技能弹层优先，其次 @ 引用弹层，最后宿主（Ctrl+Enter 派发） */
+/** 弹层键盘链：/ 技能弹层优先，其次 @ 引用弹层，最后宿主（Enter 派发） */
 function onTaKeydown(e: KeyboardEvent): void {
   if (slash.onKeydown(e)) return;
   mention.onTaKeydown(e);
@@ -373,9 +413,16 @@ onMounted(() => {
 <template>
   <div class="home">
     <div class="hero">
+      <div class="hero-mark" aria-hidden="true">
+        <span class="hm-ring" />
+        <span class="hm-core">{{ APP_MARK }}</span>
+        <span class="hm-dot d1" />
+        <span class="hm-dot d2" />
+        <span class="hm-dot d3" />
+      </div>
       <h1 class="title">
         <template v-if="creatingSkill">对话创建技能<br />先说清楚用途，确认后再写入技能库</template>
-        <template v-else>Agent Office<br />把重复的工作交给 Agent</template>
+        <template v-else>{{ APP_NAME }}<br />{{ APP_SLOGAN }}</template>
       </h1>
 
       <div v-if="tasks.length" class="stats">
@@ -434,6 +481,7 @@ onMounted(() => {
         </div>
 
         <div class="toolbar">
+          <!-- 已选专家才显示标签；未选时主流做法只留 +，默认走通用助手 -->
           <span
             v-if="selectedAgent"
             class="agent-tag active-agent"
@@ -444,13 +492,6 @@ onMounted(() => {
             {{ selectedAgent.name }}
             <span class="agent-clear" title="切回默认「通用助手」" @click.stop="clearAgent">✕</span>
           </span>
-          <span
-            v-else-if="agents.length"
-            class="agent-tag muted clickable"
-            title="点击选择特定专家（未选时默认由「通用助手」执行）"
-            @click="openAgentMenuDirect"
-          >未选专家，将使用「通用助手」</span>
-          <span v-else class="agent-tag muted">暂无可用专家，可在专家页创建</span>
 
           <!-- WorkBuddy 式 + 菜单：添加文件 / 专家（专家不再平铺在页面，收纳到 + 里） -->
           <div class="plus-wrap">
@@ -459,7 +500,7 @@ onMounted(() => {
               ref="plusTrigger"
               class="plus-btn"
               :class="{ open: plusOpen }"
-              title="添加文件 / 选择专家"
+              title="添加文件 / 选择专家（未选专家时默认「通用助手」）"
               @click="togglePlus"
             >
               <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
@@ -596,7 +637,7 @@ onMounted(() => {
             class="send"
             type="button"
             :disabled="busy || !prompt.trim()"
-            :title="busy ? '派发中…' : '派发任务（Ctrl+Enter）'"
+            :title="busy ? '派发中…' : '派发任务（Enter）'"
             @click="submit"
           >
             <svg class="icon" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
@@ -662,23 +703,88 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: center;
   background:
-    radial-gradient(720px 320px at 50% -80px, rgba(23, 126, 91, 0.07), transparent),
+    radial-gradient(720px 320px at 50% -80px, rgba(var(--accent-rgb), 0.08), transparent),
     var(--bg);
   padding: 0 24px;
 }
 :root[data-theme="dark"] .home {
   background:
-    radial-gradient(720px 320px at 50% -80px, rgba(47, 157, 117, 0.12), transparent),
+    radial-gradient(720px 320px at 50% -80px, rgba(var(--accent-rgb), 0.14), transparent),
     var(--bg);
+}
+:root[data-theme="glass"] .home {
+  background: transparent;
 }
 .hero {
   width: 100%;
   max-width: 760px;
-  margin-top: 9vh;
+  margin-top: 7vh;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  align-items: center;
+  gap: 18px;
   animation: rise 0.3s ease-out;
+}
+.hero-mark {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 2px;
+}
+.hm-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px dashed rgba(var(--accent-rgb), 0.35);
+  animation: hm-spin 16s linear infinite;
+}
+.hm-core {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 17px;
+  color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  box-shadow: 0 8px 24px rgba(var(--accent-rgb), 0.28);
+}
+.hm-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
+}
+.hm-dot.d1 {
+  top: 2px;
+  right: 10px;
+}
+.hm-dot.d2 {
+  bottom: 6px;
+  left: 4px;
+  opacity: 0.7;
+}
+.hm-dot.d3 {
+  top: 18px;
+  left: -2px;
+  width: 4px;
+  height: 4px;
+  opacity: 0.5;
+}
+@keyframes hm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hm-ring {
+    animation: none;
+  }
 }
 .title {
   margin: 0;
@@ -751,6 +857,11 @@ onMounted(() => {
   position: fixed;
   inset: 0;
   z-index: 55;
+  /* 遮罩本身不拦截；只让菜单接收点击，侧栏可照常点 */
+  pointer-events: none;
+}
+.plus-overlay .plus-pop {
+  pointer-events: auto;
 }
 .plus-pop {
   position: fixed;
@@ -896,7 +1007,7 @@ onMounted(() => {
 }
 .prompt-card.drop-hover {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(23, 126, 91, 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
 }
 .prompt-card textarea {
   border: none;
@@ -1089,6 +1200,7 @@ onMounted(() => {
   position: fixed;
   inset: 0;
   z-index: 55;
+  pointer-events: none;
 }
 .model-pop {
   position: fixed;
@@ -1099,6 +1211,7 @@ onMounted(() => {
   box-shadow: var(--shadow-pop);
   overflow: hidden;
   animation: rise 0.16s ease-out;
+  pointer-events: auto;
 }
 .pop-head {
   display: flex;

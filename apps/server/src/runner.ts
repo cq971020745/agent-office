@@ -1,6 +1,8 @@
 import {
+  calculateContextTokens,
   createAgentSession,
   DefaultResourceLoader,
+  getLastAssistantUsage,
   ModelRuntime,
   SessionManager,
   type AgentSession,
@@ -10,6 +12,7 @@ import {
   resolveProviderApiFormat,
   type AccessMode,
   type ProviderApiFormat,
+  type TaskContextUsage,
   type TaskTurnStep,
 } from "@office/shared";
 import fs from "node:fs";
@@ -25,7 +28,7 @@ import { parseModelOverrides, resolveModelCaps } from "./model-caps.js";
 import { isSafePlanCommand, PLAN_MODE_INSTRUCTION } from "./plan-mode.js";
 import { skillScriptTool } from "./skill-scripts.js";
 import { agentUsesSkill, buildSkillsPrompt, expandSkillSlash, readSkillTool, writeSkillTool } from "./skills.js";
-import { publishPi, publishStatus, publishUser } from "./sse.js";
+import { publishContext, publishPi, publishStatus, publishUser } from "./sse.js";
 import { cancelToolApproval, hasSessionGrant, requestToolApproval } from "./tool-approval.js";
 import { parseAccessMode, parseToolPolicy, PLAN_BLOCKED_TOOLS, policyFor, toolNeedsApproval } from "./tool-policy.js";
 import { writeTaskOcrRuntime } from "./ocr-runtime.js";
@@ -252,6 +255,106 @@ function getRunRow(taskId: string): TaskJoinRow | undefined {
 // 会话级状态：AgentSession 跨轮次保留在内存里（多轮追问复用同一会话，上下文不丢）；
 // 服务重启后通过 SessionManager.open 从 JSONL 恢复。
 const sessions = new Map<string, AgentSession>();
+/** 最近一次读到的上下文占用；会话被回收后仍可供详情页展示 */
+const lastContextUsage = new Map<string, TaskContextUsage>();
+
+const CONTEXT_PUBLISH_TYPES = new Set([
+  "agent_end",
+  "message_end",
+  "turn_end",
+  "auto_compaction_end",
+  "session_compact",
+]);
+
+function toTaskContextUsage(raw: {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+}): TaskContextUsage {
+  return {
+    tokens: raw.tokens,
+    contextWindow: raw.contextWindow,
+    percent: raw.percent == null ? null : Math.round(raw.percent * 10) / 10,
+  };
+}
+
+function publishSessionContext(taskId: string, session: AgentSession): void {
+  try {
+    const raw = session.getContextUsage();
+    if (!raw || !(raw.contextWindow > 0)) return;
+    const usage = toTaskContextUsage(raw);
+    lastContextUsage.set(taskId, usage);
+    publishContext(taskId, usage);
+  } catch {
+    // 读上下文失败不打断任务
+  }
+}
+
+function contextWindowForTask(taskId: string): number | null {
+  const row = db
+    .prepare(
+      `SELECT t.model_id, p.model_overrides
+       FROM tasks t
+       LEFT JOIN model_providers p ON p.id = t.provider_id
+       WHERE t.id = ?`
+    )
+    .get(taskId) as { model_id: string | null; model_overrides: string | null } | undefined;
+  if (!row?.model_id) return null;
+  return resolveModelCaps(row.model_id, parseModelOverrides(row.model_overrides)).contextWindow;
+}
+
+/** 冷启动：从会话 JSONL 读最近一次 assistant usage，估占用。 */
+function contextUsageFromSessionFile(taskId: string, contextWindow: number): TaskContextUsage | null {
+  const row = db
+    .prepare("SELECT session_id AS sessionId, workspace_path AS workspacePath FROM tasks WHERE id = ?")
+    .get(taskId) as { sessionId: string | null; workspacePath: string } | undefined;
+  if (!row?.sessionId || !row.workspacePath) return null;
+  try {
+    const file = SessionManager.findById(row.workspacePath, row.sessionId, paths.sessions);
+    if (!file) return null;
+    const sm = SessionManager.open(file, paths.sessions, row.workspacePath);
+    const usage = getLastAssistantUsage(sm.getBranch());
+    if (!usage) return { tokens: null, contextWindow, percent: null };
+    const tokens = calculateContextTokens(usage);
+    if (!(tokens > 0)) return { tokens: null, contextWindow, percent: null };
+    return toTaskContextUsage({
+      tokens,
+      contextWindow,
+      percent: (tokens / contextWindow) * 100,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** 详情页拉取当前上下文占用：优先热会话，其次缓存/会话文件，再退回模型窗口容量。 */
+export function peekContextUsage(taskId: string): TaskContextUsage | null {
+  const session = sessions.get(taskId);
+  if (session) {
+    try {
+      const raw = session.getContextUsage();
+      if (raw && raw.contextWindow > 0) {
+        const usage = toTaskContextUsage(raw);
+        lastContextUsage.set(taskId, usage);
+        return usage;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  const cached = lastContextUsage.get(taskId);
+  if (cached && cached.tokens != null) return cached;
+
+  const contextWindow = contextWindowForTask(taskId);
+  if (!contextWindow || contextWindow <= 0) return cached ?? null;
+
+  const fromFile = contextUsageFromSessionFile(taskId, contextWindow);
+  if (fromFile) {
+    lastContextUsage.set(taskId, fromFile);
+    return fromFile;
+  }
+  return cached ?? { tokens: null, contextWindow, percent: null };
+}
 const busy = new Set<string>();
 const cancelRequested = new Set<string>();
 const lastActivity = new Map<string, number>();
@@ -639,6 +742,10 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
     } catch {
       // 单条事件序列化失败不应中断任务
     }
+    // 轮次节点刷新上下文占用，避免 text_delta 刷屏
+    if (CONTEXT_PUBLISH_TYPES.has(ev.type)) {
+      publishSessionContext(row.id, session);
+    }
   });
   return session;
 }
@@ -759,6 +866,7 @@ export function dropTask(taskId: string): void {
   const session = sessions.get(taskId);
   if (session && busy.has(taskId)) void session.abort();
   sessions.delete(taskId);
+  lastContextUsage.delete(taskId);
   cancelRequested.delete(taskId);
   lastActivity.delete(taskId);
   cancelToolApproval(taskId);
@@ -859,6 +967,7 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
     publishStatus(row.id, cancelled ? "cancelled" : "failed", message);
   } finally {
     clearInterval(watchdog);
+    publishSessionContext(row.id, session);
   }
 }
 

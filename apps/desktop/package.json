@@ -2,8 +2,8 @@
   "name": "@office/desktop",
   "private": true,
   "version": "0.1.0",
-  "description": "Agent Office 桌面客户端（一体包：内嵌服务端）",
-  "author": "Agent Office",
+  "description": "澄台桌面客户端（一体包：内嵌服务端）",
+  "author": "澄台",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@office/shared": "workspace:*",
+    "gsap": "3.15.0",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },

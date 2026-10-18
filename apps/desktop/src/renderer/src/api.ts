@@ -24,6 +24,10 @@ import type {
   SkillUpdateInfo,
   SkillUsageInfo,
   Task,
+  TaskContextUsage,
+  TaskGitBranch,
+  TaskGitCommit,
+  TaskGitStatus,
   TaskEventEnvelope,
   TaskMessage,
   ToolApprovalDecision,
@@ -163,6 +167,48 @@ export function listTasksPaged(params: { limit?: number; offset?: number; status
 
 export function getTask(id: string) {
   return request<Task>(`/tasks/${id}`);
+}
+
+/** 任务会话当前上下文占用（tokens / contextWindow / percent） */
+export function getTaskContextUsage(id: string) {
+  return request<TaskContextUsage>(`/tasks/${id}/context-usage`);
+}
+
+export function getTaskGitStatus(id: string) {
+  return request<TaskGitStatus>(`/tasks/${id}/git`);
+}
+
+export function getTaskGitBranches(id: string) {
+  return request<{ items: TaskGitBranch[] }>(`/tasks/${id}/git/branches`);
+}
+
+export function getTaskGitLog(id: string, limit = 40) {
+  return request<{ items: TaskGitCommit[] }>(`/tasks/${id}/git/log?limit=${limit}`);
+}
+
+export function checkoutTaskGitBranch(id: string, branch: string) {
+  return request<TaskGitStatus>(`/tasks/${id}/git/checkout`, {
+    method: "POST",
+    body: JSON.stringify({ branch }),
+  });
+}
+
+export function createTaskGitBranch(id: string, branch: string) {
+  return request<TaskGitStatus>(`/tasks/${id}/git/branch`, {
+    method: "POST",
+    body: JSON.stringify({ branch }),
+  });
+}
+
+export function commitTaskGit(id: string, message: string) {
+  return request<TaskGitStatus>(`/tasks/${id}/git/commit`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+export function pushTaskGit(id: string) {
+  return request<TaskGitStatus>(`/tasks/${id}/git/push`, { method: "POST", body: "{}" });
 }
 
 export function createTask(

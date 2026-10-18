@@ -1,6 +1,7 @@
-/* ===== Agent Office 设计系统 · 墨松绿 =====
-   中性色带暖绿灰调，主色只用于主操作 / 选中态 / 链接 / 焦点。
-   暗色主题通过 html[data-theme="dark"] 切换（localStorage: agent-office-theme）。 */
+/* ===== 澄台设计系统 =====
+   中性色 + 可切换主色 / 深浅（JS 写入 --accent*、--surface*、--glass-*）。
+   模式：html[data-theme="light|dark|glass"]（localStorage: agent-office-theme）。
+   主色 / 深浅：agent-office-accent*、agent-office-depth-v2。 */
 :root {
   color-scheme: light;
   --bg: #ffffff;
@@ -13,10 +14,13 @@
   --text: #1a201d;
   --text-2: #4f5c55;
   --text-3: #6d7b73;
+  /* 默认墨松绿；bootstrapTheme() 会按用户选择覆盖 */
   --accent: #177e5b;
   --accent-strong: #106348;
-  --accent-soft: #e8f3ee;
-  --accent-border: #c2e0d3;
+  --accent-soft: rgba(23, 126, 91, 0.12);
+  --accent-border: rgba(23, 126, 91, 0.28);
+  --accent-rgb: 23, 126, 91;
+  --accent-base: #177e5b;
   --on-accent: #ffffff;
   --success: #15803d;
   --success-soft: #e5f4e9;
@@ -40,6 +44,8 @@
   --shadow-1: 0 1px 2px rgba(20, 28, 24, 0.05);
   --shadow-2: 0 1px 2px rgba(20, 28, 24, 0.04), 0 6px 20px rgba(20, 28, 24, 0.07);
   --shadow-pop: 0 4px 12px rgba(16, 22, 19, 0.08), 0 20px 48px rgba(16, 22, 19, 0.18);
+  --glass-blur: 0px;
+  --glass-saturate: 1;
   font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   font-size: 14px;
   color: var(--text);
@@ -57,11 +63,6 @@
   --text: #e7ebe8;
   --text-2: #a7b2ab;
   --text-3: #808d85;
-  --accent: #2f9d75;
-  --accent-strong: #45b28b;
-  --accent-soft: rgba(47, 157, 117, 0.16);
-  --accent-border: rgba(47, 157, 117, 0.42);
-  --on-accent: #0b1410;
   --success: #4cbb7f;
   --success-soft: rgba(76, 187, 127, 0.16);
   --danger: #ef6a5f;
@@ -82,6 +83,82 @@
   --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.3), 0 20px 48px rgba(0, 0, 0, 0.5);
 }
 
+/* 玻璃拟态：表面透明度 / 模糊由 JS 按深浅写入；下列为回退默认 */
+:root[data-theme="glass"] {
+  color-scheme: dark;
+  --bg: transparent;
+  --surface: rgba(255, 255, 255, 0.1);
+  --surface-2: rgba(255, 255, 255, 0.14);
+  --sidebar-bg: rgba(10, 16, 24, 0.42);
+  --border: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.24);
+  --border-faint: rgba(255, 255, 255, 0.08);
+  --text: #f2f5f8;
+  --text-2: rgba(242, 245, 248, 0.74);
+  --text-3: rgba(242, 245, 248, 0.5);
+  --success: #5fd49a;
+  --success-soft: rgba(95, 212, 154, 0.18);
+  --danger: #ff7b70;
+  --danger-strong: #ff9a92;
+  --danger-soft: rgba(255, 123, 112, 0.16);
+  --danger-border: rgba(255, 123, 112, 0.4);
+  --warn: #f0b84a;
+  --warn-soft: rgba(240, 184, 74, 0.18);
+  --info: #7eb6ff;
+  --info-soft: rgba(126, 182, 255, 0.18);
+  --code-bg: rgba(6, 10, 16, 0.72);
+  --code-text: #d5e0ea;
+  --term-bg: rgba(4, 8, 12, 0.78);
+  --term-text: #c9d7e4;
+  --overlay: rgba(4, 8, 14, 0.55);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.18), 0 10px 28px rgba(0, 0, 0, 0.28);
+  --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.35), 0 28px 64px rgba(0, 0, 0, 0.4);
+  --glass-blur: 12px;
+  --glass-saturate: 1.25;
+  --glass-dim: 0.06;
+  --glass-panel: rgba(16, 22, 32, 0.08);
+  --glass-input: rgba(255, 255, 255, 0.03);
+  --glass-brand: rgba(8, 14, 24, 0.1);
+  --glass-accent-glow: 0.14;
+}
+
+/* 微特效开启时的轻量 CSS bits（重动效由 GSAP 负责） */
+:root[data-fx="on"] button.primary {
+  position: relative;
+  overflow: hidden;
+}
+:root[data-fx="on"] button.primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 65%
+  );
+  transform: translateX(-120%);
+  animation: fx-sheen 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes fx-sheen {
+  0%,
+  55% {
+    transform: translateX(-120%);
+  }
+  75%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-fx="on"] button.primary::after {
+    animation: none;
+    display: none;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -93,11 +170,52 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-::selection {
-  background: rgba(23, 126, 91, 0.22);
+/* 玻璃态：渐变底图 + --glass-dim / --glass-accent-glow（深浅滑杆全局控制） */
+:root[data-theme="glass"] body {
+  min-height: 100vh;
+  background:
+    linear-gradient(rgba(6, 10, 16, var(--glass-dim)), rgba(6, 10, 16, var(--glass-dim))),
+    radial-gradient(900px 520px at 12% -8%, rgba(var(--accent-rgb), var(--glass-accent-glow)), transparent 58%),
+    radial-gradient(780px 480px at 92% 8%, rgba(var(--accent-rgb), calc(var(--glass-accent-glow) * 0.55)), transparent 55%),
+    radial-gradient(640px 420px at 70% 100%, rgba(56, 120, 200, calc(var(--glass-accent-glow) * 0.5)), transparent 50%),
+    linear-gradient(165deg, #0b1422 0%, #101a28 42%, #0a1018 100%);
+  background-attachment: fixed;
 }
-:root[data-theme="dark"] ::selection {
-  background: rgba(47, 157, 117, 0.35);
+
+/* 玻璃态：常见面板统一吃深浅 token（模糊 + 半透明表面） */
+:root[data-theme="glass"] .card,
+:root[data-theme="glass"] .dialog,
+:root[data-theme="glass"] .box,
+:root[data-theme="glass"] .composer,
+:root[data-theme="glass"] .prompt-card,
+:root[data-theme="glass"] .theme-panel,
+:root[data-theme="glass"] .sidebar,
+:root[data-theme="glass"] .mention-pop,
+:root[data-theme="glass"] .skill-pop,
+:root[data-theme="glass"] .wps-dialog,
+:root[data-theme="glass"] .overlay > * {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+:root[data-theme="glass"] button:not(.primary):not(.link):not(.ghost):not(.icon-btn):not(.pwd-eye):not(.captcha) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+:root[data-theme="glass"] .card,
+:root[data-theme="glass"] .dialog,
+:root[data-theme="glass"] .box,
+:root[data-theme="glass"] .composer,
+:root[data-theme="glass"] .prompt-card {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+::selection {
+  background: rgba(var(--accent-rgb), 0.28);
+}
+:root[data-theme="dark"] ::selection,
+:root[data-theme="glass"] ::selection {
+  background: rgba(var(--accent-rgb), 0.38);
 }
 
 :focus-visible {
@@ -179,7 +297,8 @@ a {
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
   animation: shimmer 1.4s infinite;
 }
-:root[data-theme="dark"] .skeleton::after {
+:root[data-theme="dark"] .skeleton::after,
+:root[data-theme="glass"] .skeleton::after {
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
 }
 @keyframes shimmer {
@@ -275,12 +394,15 @@ textarea:focus,
 select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(23, 126, 91, 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
 }
 :root[data-theme="dark"] input:focus,
 :root[data-theme="dark"] textarea:focus,
-:root[data-theme="dark"] select:focus {
-  box-shadow: 0 0 0 3px rgba(47, 157, 117, 0.22);
+:root[data-theme="dark"] select:focus,
+:root[data-theme="glass"] input:focus,
+:root[data-theme="glass"] textarea:focus,
+:root[data-theme="glass"] select:focus {
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.28);
 }
 textarea {
   resize: vertical;
@@ -296,6 +418,16 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px;
+}
+:root[data-theme="glass"] .card,
+:root[data-theme="glass"] .dialog {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+:root[data-theme="glass"] input,
+:root[data-theme="glass"] textarea,
+:root[data-theme="glass"] select {
+  background: var(--glass-input, rgba(255, 255, 255, 0.08));
 }
 .card h3 {
   margin: 0 0 12px;
@@ -449,16 +581,17 @@ tbody tr:hover {
 .md code.inline {
   font-family: var(--mono);
   font-size: 12.5px;
-  background: rgba(23, 126, 91, 0.09);
-  border: 1px solid rgba(23, 126, 91, 0.12);
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.16);
   border-radius: 5px;
   padding: 1px 5px;
   color: var(--accent-strong);
 }
-:root[data-theme="dark"] .md code.inline {
-  background: rgba(47, 157, 117, 0.14);
-  border-color: rgba(47, 157, 117, 0.22);
-  color: #7fd0ae;
+:root[data-theme="dark"] .md code.inline,
+:root[data-theme="glass"] .md code.inline {
+  background: rgba(var(--accent-rgb), 0.16);
+  border-color: rgba(var(--accent-rgb), 0.28);
+  color: var(--accent-strong);
 }
 .md pre.md-code {
   position: relative;

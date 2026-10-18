@@ -1,6 +1,6 @@
-# Agent 办公平台
+# 澄台（CHENG）
 
-任务执行型 AI 办公平台（对标腾讯 WorkBuddy）：用户下达任务，Agent 自主拆解、调用工具执行，交付可验收的成果物。
+任务执行型 AI 办公平台（对标腾讯 WorkBuddy）：用户下达任务，Agent 自主拆解、调用工具执行，交付可验收的成果物。对外品牌为「澄台」；仓库/包名仍可沿用 agent-office。
 
 ## Language
 

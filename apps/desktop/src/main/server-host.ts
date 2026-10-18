@@ -157,7 +157,7 @@ export async function showServerStartError(err: unknown): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   await dialog.showMessageBox({
     type: "error",
-    title: "Agent Office 启动失败",
+    title: "澄台启动失败",
     message: "无法启动内嵌服务端",
     detail: message,
     buttons: ["退出"],

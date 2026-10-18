@@ -37,7 +37,7 @@ export interface UseMentionsOptions {
   prompt: Ref<string>;
   /** 输入框元素，用于定位 @token 与计算视口可用高度 */
   taRef: Ref<HTMLTextAreaElement | null>;
-  /** 弹层未消费按键时交给宿主（HomeView: Ctrl+Enter 派发；详情页: Enter 发送） */
+  /** 弹层未消费按键时交给宿主（HomeView / 详情页: Enter 发送，Shift+Enter 换行） */
   onFallbackKey: (e: KeyboardEvent) => void;
 }
 
@@ -377,7 +377,7 @@ export function useMentions(opts: UseMentionsOptions) {
         }
         return;
       }
-      // 输入 @ 时 Enter 选中候选而非发送；Ctrl/Cmd+Enter 仍走宿主发送
+      // 输入 @ 时 Enter 选中候选而非发送（Ctrl/Cmd+Enter 仍交给宿主）
       if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         activateRow(rows[state.active]);

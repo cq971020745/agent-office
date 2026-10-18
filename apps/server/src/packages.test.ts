@@ -108,6 +108,7 @@ describe("installPiPackages", () => {
     assert.deepEqual(sources, [
       "./packages/document-ocr",
       "./packages/office-suite",
+      "npm:@zhushanwen/pi-smart-context@0.3.9",
       "npm:pi-quiver@6.13.2",
       "npm:pi-web-access@0.42.0",
     ]);
@@ -120,11 +121,17 @@ describe("installPiPackages", () => {
     assert.ok(webAccess, "应声明 pi-web-access");
     assert.equal(webAccess.source, "npm:pi-web-access@0.42.0");
     assert.equal(webAccess.extensions, undefined);
+    const smart = settings.packages.find((pkg: { source: string }) =>
+      String(pkg.source).includes("pi-smart-context")
+    );
+    assert.ok(smart, "应声明 pi-smart-context");
+    assert.deepEqual(settings.defaultTools, ["+tool_search"]);
+    assert.ok(fs.existsSync(path.join(paths.agentDir, "config", "smart-context-ext-config.json")));
 
     const again = installPiPackages();
     assert.ok(again.installed.every((pkg) => pkg.alreadySynced));
     const settingsAgain = JSON.parse(fs.readFileSync(path.join(paths.agentDir, "settings.json"), "utf8"));
-    assert.equal(settingsAgain.packages.length, 4, "重复安装不应产生重复声明");
+    assert.equal(settingsAgain.packages.length, 5, "重复安装不应产生重复声明");
   });
 
   it("目标被篡改后重装可修复", () => {

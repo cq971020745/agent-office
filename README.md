@@ -1,4 +1,4 @@
-# Agent 办公平台
+# 澄台（CHENG）
 
 任务执行型 AI 办公平台（对标腾讯 WorkBuddy）：用户下达任务 → agent 自主拆解执行 → 交付可验收成果物。设计共识见 [docs/design.md](docs/design.md)，领域术语见 [CONTEXT.md](CONTEXT.md)，关键决策见 [docs/adr/](docs/adr/)，迭代历史见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -40,6 +40,10 @@ pnpm dev:desktop    # Electron 控制台
 **文档解析（doc_to_md）**。启动时声明并安装 `pi-quiver@6.13.2`，只启用 `doc_to_md`。它把 PDF、DOCX、旧版 DOC、PPTX、XLSX/XLS 转成工作区隐藏目录 `.parsed/` 里的 Markdown，再由 `workspace_read` 读取。`workspace_read` 遇到二进制文件不再返回乱码；旧版 Word 被存成 `.docx` 时，会按文件头复制一份隐藏的 `.doc` 再交给解析器，原文件不改。高保真降级依赖本机 LibreOffice `soffice`；Docker 镜像已安装 Python 3 与 LibreOffice Writer/Calc/Impress。本地附件不要为了提取正文上传到 WPS 云盘。
 
 **网页检索（web_search）**。启动时声明并安装 `pi-web-access@0.42.0`，任务会话可用 `web_search` 搜公开网页、`fetch_content` 抓取已知 URL（含 GitHub / PDF / 视频）、`get_search_content` 分页读取检索缓存、`source_check` 收集带引用的来源。配置在 `{DATA_DIR}/agent/web-search.json`，不使用本机 `~/.pi`；缺省文件时写入 `toolActivation: "eager"`。无 API 密钥时走包内默认检索链；平台自带的 `fetch_url` 仍作为简单 HTML 回退。专家可在工具策略里对这些工具设 ask/deny。
+
+**智能上下文压缩（smart-context）**。启动时声明并安装 `@zhushanwen/pi-smart-context@0.3.9`，并写入 `{DATA_DIR}/agent/config/smart-context-ext-config.json`（缺省才创建）与 `defaultTools: ["+tool_search"]`。会话可用 deferred 工具 `compact_context`；pi 内置自动压缩仍默认开启。桌面任务页输入框下方展示上下文占用（类 Cursor）。**对外客户端能力只认平台 `agentDir`，不要依赖开发机 `~/.pi`**（见 [ADR 0008](docs/adr/0008-product-shipped-pi-packages.md)）。
+
+**任务 Git 面板**。工作区本身是 Git 仓库时，任务顶栏显示分支、更改 +/-、切分支/新建分支、提交/推送与提交历史（Git 图谱）。平台隔离区与专家常驻目录不会误显示宿主 monorepo 的 Git。终端 TUI 的 `pi-git-ui` / statusbar **不**随产品安装，等价能力在桌面 UI。
 
 **内置 pi 插件包（office-suite）**。服务端启动时把 [pi-packages/office-suite](pi-packages/office-suite/) 正规安装进平台数据目录（`agent/packages/` + `agent/settings.json` 的 packages 声明），由 pi 的资源加载器在每个任务会话中自动生效：
 
@@ -120,7 +124,7 @@ pnpm pack:desktop
 
 说明：
 
-- 首次启动会拉起内嵌服务端，并可能下载 `pi-quiver` / `pi-web-access` 等到用户数据目录，需能访问 npm。
+- 首次启动会拉起内嵌服务端，并可能下载 `pi-quiver` / `pi-web-access` / `@zhushanwen/pi-smart-context` 等到用户数据目录（`{DATA_DIR}/agent`），需能访问 npm；不要依赖开发机 `~/.pi`。
 - 登录仍走企业知识库；接收方需能访问 `KB_BASE_URL`（默认内网知识库）。
 - `doc_to_md` 高保真降级依赖本机 LibreOffice；`run_code` 依赖本机 Docker——未安装时对应能力不可用，其余功能正常。
 
@@ -128,7 +132,7 @@ pnpm pack:desktop
 文档自动生成于：2026-10-16 10:41
 
 ### 项目概览
-- 名称：agent-office
+- 产品名：澄台（安装包/快捷方式）；仓库包名仍为 agent-office
 - 包管理：pnpm workspace
 - 应用：`@office/server`（Fastify + pi agent）、`@office/desktop`（Electron + Vue 3）、`@office/shared`（共享 DTO）
 

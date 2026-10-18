@@ -1,5 +1,5 @@
 import type { ServerResponse } from "node:http";
-import type { TaskEventEnvelope, TaskStatus } from "@office/shared";
+import type { TaskContextUsage, TaskEventEnvelope, TaskStatus } from "@office/shared";
 
 type Listener = (envelope: TaskEventEnvelope) => void;
 
@@ -54,6 +54,13 @@ export function publishStatus(taskId: string, status: TaskStatus, error?: string
 
 export function publishUser(taskId: string, text: string): void {
   const envelope: TaskEventEnvelope = { seq: nextSeq(taskId), kind: "user", text };
+  record(taskId, envelope);
+  for (const fn of listeners.get(taskId) ?? []) fn(envelope);
+}
+
+/** 任务会话上下文占用（供桌面端会话框底部展示） */
+export function publishContext(taskId: string, usage: TaskContextUsage): void {
+  const envelope: TaskEventEnvelope = { seq: nextSeq(taskId), kind: "context", usage };
   record(taskId, envelope);
   for (const fn of listeners.get(taskId) ?? []) fn(envelope);
 }

@@ -2,6 +2,23 @@
 
 记录平台每次迭代的功能、修复与行为变化。领域术语见 [CONTEXT.md](CONTEXT.md)。
 
+## 2026-10-18（二十四）
+
+### 新增
+
+- **会话上下文占用**：任务详情输入框下方展示「上下文 xx% · used / window」，SSE `kind: context` + `GET /tasks/:id/context-usage`；冷启动可读会话 JSONL。
+- **任务 Git 面板**：工作区为 Git 仓库时顶栏可切换/新建分支、看更改 +/-、提交/推送、Git 图谱；平台隔离区与专家常驻目录不穿透宿主 monorepo。
+- **产品内 smart-context**：启动声明并安装 `npm:@zhushanwen/pi-smart-context@0.3.9`，写入 `config/smart-context-ext-config.json` 与 `defaultTools: ["+tool_search"]`（见 [ADR 0008](docs/adr/0008-product-shipped-pi-packages.md)）。
+
+### 变更
+
+- **Pi 包随产品分发**：对外客户端只用 `{DATA_DIR}/agent`，禁止把开发机 `~/.pi` 当交付；终端 TUI 包（statusbar / sidebar / pi-git-ui）不进依赖，等价能力在桌面 UI。
+- **新建任务输入**：Enter 发送、Shift+Enter 换行；未选专家时只显示「+」，不再展示「未选专家…」文案。
+
+### 修复
+
+- **历史网页标注截图裂图**：`GET /tasks/:id/workspace/file` 按扩展名返回正确 `image/*` 且 `Content-Disposition: inline`；桌面 CSP `img-src` 放行 API 源（此前 MIME/500 与 CSP 拦图会导致气泡只显示文件名）。
+
 ## 2026-10-18（二十三）
 
 ### 新增

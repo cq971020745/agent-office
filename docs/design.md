@@ -4,7 +4,7 @@
 
 ## 1. 产品
 
-任务执行型 AI 办公平台，对标腾讯 WorkBuddy：用户下达任务 → agent 自主拆解执行 → 交付可验收成果物。登录身份与左侧工作台接入企业知识库（见 ADR 0006、0007）。术语见根目录 `CONTEXT.md`。
+澄台（CHENG）：任务执行型 AI 办公平台，对标腾讯 WorkBuddy：用户下达任务 → agent 自主拆解执行 → 交付可验收成果物。登录身份与左侧工作台接入企业知识库（见 ADR 0006、0007）。术语见根目录 `CONTEXT.md`。
 
 ## 2. 技术栈与形态
 
@@ -34,6 +34,7 @@ Node 后端 (Fastify + TS) ——单容器
         │   · doc_to_md：pi-quiver 扩展，只启用该扩展，产物写入 .parsed/
         │   · ocr_to_md：内置 document-ocr 扩展，默认开源 Tesseract.js，可绑定视觉 OCR 模型，产物写入 .parsed/
         │   · web_search / fetch_content / get_search_content / source_check：pi-web-access@0.42.0，配置在 {agentDir}/web-search.json
+        │   · compact_context（deferred）：@zhushanwen/pi-smart-context，配置在 {agentDir}/config/；Pi 包一律进平台 agentDir（ADR 0008）
         │   · 输出按官方规范截断（2000 行 / 50KB，全量落盘给路径引用）
         │   · beforeToolCall 路径 jail（限制在任务工作区内）——MVP 便利级隔离
         ├── 技能：{agentDir}/skills/<name>/SKILL.md 渐进披露——系统提示词只注入元数据清单，
@@ -41,7 +42,7 @@ Node 后端 (Fastify + TS) ——单容器
         ├── 会话：SessionManager.create(cwd, sessionsDir)，与任务 ID 关联
         ├── 模型：pi-ai 多 provider（DeepSeek/Qwen/Moonshot/任意 OpenAI 兼容），
         │   自定义 CredentialStore；密钥属于当前企业知识库用户；compat 按 baseUrl 自动探测
-        ├── compaction 默认开启（reserve 16k / keep 20k）
+        ├── compaction 默认开启（reserve 16k / keep 20k）；桌面展示上下文占用（SSE kind:context）
         └── 事件：session.subscribe → SSE 桥（自写；agent_settled 判定轮次终结）
 ```
 

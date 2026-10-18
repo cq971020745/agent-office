@@ -1,6 +1,6 @@
 appId: com.agentoffice.app
-productName: Agent Office
-copyright: Copyright © Agent Office
+productName: 澄台
+copyright: Copyright © 澄台
 directories:
   output: release
   buildResources: build
@@ -37,7 +37,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Agent Office
+  shortcutName: 澄台
   artifactName: ${productName}-${version}-win-${arch}-Setup.${ext}
 portable:
   artifactName: ${productName}-${version}-win-${arch}-Portable.${ext}

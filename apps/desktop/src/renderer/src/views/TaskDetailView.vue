@@ -6,6 +6,7 @@ import type {
   Deliverable,
   ModelOption,
   Task,
+  TaskContextUsage,
   TaskEventEnvelope,
   TaskMessage,
   TaskTurnStep,
@@ -20,6 +21,7 @@ import {
   downloadDeliverable,
   API_BASE,
   getTask,
+  getTaskContextUsage,
   getTaskMessages,
   getToken,
   listDeliverables,
@@ -39,6 +41,7 @@ import { useMentions } from "../composables/useMentions";
 import { useSlashSkills } from "../composables/useSlashSkills";
 import AccessModePicker from "../components/AccessModePicker.vue";
 import AgentAvatar from "../components/AgentAvatar.vue";
+import GitPanel from "../components/GitPanel.vue";
 import MentionChips from "../components/MentionChips.vue";
 import MentionPopup from "../components/MentionPopup.vue";
 import PreviewPanel from "../components/PreviewPanel.vue";
@@ -66,6 +69,7 @@ watch(
     deliverables.value = [];
     toolApproval.value = null;
     sessionGrants.value = [];
+    contextUsage.value = null;
     editingTitle.value = false;
     taskId.value = id as string;
     // 换任务时清掉上一任务遗留的 @ 引用与弹层状态
@@ -121,6 +125,40 @@ const selectedModelLabel = computed(() => selModelId.value || "选择模型");
 const selectedProviderName = computed(
   () => modelOptions.value.find((x) => x.providerId === selProviderId.value)?.providerName ?? task.value?.providerName ?? ""
 );
+
+/** 会话上下文占用（类 Cursor：输入框下方显示） */
+const contextUsage = ref<TaskContextUsage | null>(null);
+const contextUsageLabel = computed(() => {
+  const u = contextUsage.value;
+  if (!u || !(u.contextWindow > 0)) return "";
+  const win = formatTokenCount(u.contextWindow);
+  if (u.tokens == null || u.percent == null) return `上下文 — · — / ${win}`;
+  const pct = u.percent >= 10 ? `${Math.round(u.percent)}%` : `${u.percent.toFixed(1)}%`;
+  return `上下文 ${pct} · ${formatTokenCount(u.tokens)} / ${win}`;
+});
+const contextUsageLevel = computed(() => {
+  const pct = contextUsage.value?.percent;
+  if (pct == null) return "idle";
+  if (pct >= 90) return "danger";
+  if (pct >= 75) return "warn";
+  return "ok";
+});
+
+function formatTokenCount(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1000) return String(Math.round(n));
+  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+async function refreshContextUsage(): Promise<void> {
+  try {
+    contextUsage.value = await getTaskContextUsage(taskId.value);
+  } catch {
+    // 无会话/无模型时保持现状
+  }
+}
 const modelCount = computed(() => modelOptions.value.reduce((n, x) => n + x.models.length, 0));
 const filteredModelOptions = computed(() => {
   const kw = modelSearch.value.trim().toLowerCase();
@@ -168,6 +206,8 @@ async function pickModel(providerId: string, modelId: string): Promise<void> {
       providerName: res.providerName,
     };
     toast("success", `已切换模型：${res.modelId}`);
+    // 换模型后窗口容量可能变，重新读占用
+    void refreshContextUsage();
   } catch (err) {
     selProviderId.value = prev.providerId;
     selModelId.value = prev.modelId;
@@ -229,6 +269,16 @@ function mapFilesToAttachments(files: File[]) {
   }));
 }
 
+/** 历史/新网页标注消息：气泡主文只展示「用户说明」，定位细节折叠 */
+function parseAnnotation(content: string): { note: string; meta: string } | null {
+  const raw = content.trim();
+  if (!raw.startsWith("[网页标注]")) return null;
+  const noteMatch = raw.match(/### 用户说明\r?\n([\s\S]*?)(?=\r?\n### |\r?\n```html|$)/);
+  const note = (noteMatch?.[1] ?? "").trim() || "（未填写说明）";
+  const meta = raw.replace(/\r?\n### 用户说明[\s\S]*$/, "").trim();
+  return { note, meta };
+}
+
 /** 输入条附件缩略图：按 File 缓存 blob URL，移除时释放 */
 const composerPreviewCache = new Map<File, string>();
 function composerPreviewUrl(f: File): string {
@@ -239,19 +289,6 @@ function composerPreviewUrl(f: File): string {
   }
   return url;
 }
-watch(
-  attachments,
-  (list) => {
-    const keep = new Set(list);
-    for (const [f, url] of composerPreviewCache) {
-      if (!keep.has(f)) {
-        URL.revokeObjectURL(url);
-        composerPreviewCache.delete(f);
-      }
-    }
-  },
-  { deep: true }
-);
 
 const lightbox = ref<{ src: string; title: string } | null>(null);
 function openLightbox(src: string, title: string): void {
@@ -429,6 +466,7 @@ function chatFileRows(files: Deliverable[] | undefined): ChatFileRow[] {
 
 const running = computed(() => task.value?.status === "running" || task.value?.status === "pending");
 const awaitingApproval = computed(() => task.value?.status === "awaiting_approval");
+const sending = ref(false);
 // 运行中也可发送（发送 = 打断当前轮并开新一轮），只挡重复提交
 const canSend = computed(() => draft.value.trim().length > 0 && !sending.value);
 
@@ -446,7 +484,20 @@ const {
   onDrop,
   onPaste,
 } = useAttachments();
-const sending = ref(false);
+// 必须在 useAttachments() 之后：此前 watch(attachments) 会 TDZ 崩掉 setup，连带 RouterView 整页挂死
+watch(
+  attachments,
+  (list) => {
+    const keep = new Set(list);
+    for (const [f, url] of composerPreviewCache) {
+      if (!keep.has(f)) {
+        URL.revokeObjectURL(url);
+        composerPreviewCache.delete(f);
+      }
+    }
+  },
+  { deep: true }
+);
 
 // ---------- 高风险审批面板 ----------
 // Agent 首轮只输出执行清单（- [ ] 条目），用户逐项勾选后提交；默认全选，取消勾选的项目不会执行
@@ -665,6 +716,10 @@ function handleEnvelope(env: TaskEventEnvelope): void {
   if (env.seq <= lastSeq) return;
   lastSeq = env.seq;
 
+  if (env.kind === "context") {
+    contextUsage.value = env.usage;
+    return;
+  }
   if (env.kind === "user") {
     // 别的端发出的新消息：以服务端消息列表为准
     void refreshMessages();
@@ -745,7 +800,13 @@ async function refreshDeliverables(): Promise<void> {
 async function refreshAll(): Promise<void> {
   try {
     task.value = await getTask(taskId.value);
-    await Promise.all([refreshMessages(), refreshDeliverables(), refreshSessionGrants(), loadModelOptions()]);
+    await Promise.all([
+      refreshMessages(),
+      refreshDeliverables(),
+      refreshSessionGrants(),
+      loadModelOptions(),
+      refreshContextUsage(),
+    ]);
     // 常驻订阅：多轮对话期间页面不关流，重连靠 seq 去重
     closeEvents = openTaskEvents(taskId.value, handleEnvelope);
   } catch (err) {
@@ -1085,6 +1146,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="tb-right">
+        <GitPanel :task-id="taskId" />
         <span class="status" :class="task.status">{{ STATUS_TEXT[task.status] ?? task.status }}</span>
         <button
           type="button"
@@ -1128,7 +1190,17 @@ onBeforeUnmount(() => {
                       <img :src="attachmentSrc(att)" :alt="att.filename" class="msg-img" loading="lazy" />
                     </button>
                   </div>
-                  <div v-if="m.content.trim()" class="bubble-text">{{ m.content }}</div>
+                  <!-- 网页标注：截图在上（attachments），说明在下；定位细节可展开（历史消息同样解析） -->
+                  <template v-for="ann in [parseAnnotation(m.content)]" :key="m.id + '-ann'">
+                    <div v-if="ann" class="annotate-card">
+                      <p class="annotate-note">{{ ann.note }}</p>
+                      <details class="annotate-details">
+                        <summary>定位与元素详情</summary>
+                        <pre class="annotate-meta">{{ ann.meta }}</pre>
+                      </details>
+                    </div>
+                    <div v-else-if="m.content.trim()" class="bubble-text">{{ m.content }}</div>
+                  </template>
                   <div v-if="fileAttachments(m).length" class="msg-attach">
                     <span
                       v-for="(att, ai) in fileAttachments(m)"
@@ -1443,6 +1515,13 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
+          <p v-if="contextUsageLabel" class="context-usage" :class="contextUsageLevel" :title="contextUsageLabel">
+            <svg class="ctx-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            <span>{{ contextUsageLabel }}</span>
+          </p>
           <p v-if="sendError" class="send-err">{{ sendError }}</p>
         </div>
       </section>
@@ -1773,6 +1852,42 @@ button.sm {
   word-break: break-word;
   padding: 0 5px 2px;
 }
+.msg.user .annotate-card {
+  padding: 2px 5px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.msg.user .annotate-note {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.msg.user .annotate-details {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.msg.user .annotate-details summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-2);
+}
+.msg.user .annotate-meta {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
 .msg.user .msg-attach {
   display: flex;
   flex-wrap: wrap;
@@ -2099,7 +2214,7 @@ button.sm {
 }
 .composer-zone.drop-hover .composer {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(23, 126, 91, 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
 .composer {
@@ -2115,10 +2230,16 @@ button.sm {
 }
 .composer:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(23, 126, 91, 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.16);
 }
-:root[data-theme="dark"] .composer:focus-within {
-  box-shadow: 0 0 0 3px rgba(47, 157, 117, 0.22);
+:root[data-theme="dark"] .composer:focus-within,
+:root[data-theme="glass"] .composer:focus-within {
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.28);
+}
+:root[data-theme="glass"] .composer {
+  background: var(--surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .attach-strip {
   display: flex;
@@ -2276,6 +2397,35 @@ button.sm {
   margin: 8px auto 0;
   color: var(--danger);
   font-size: 12.5px;
+}
+/* 类 Cursor：会话输入框下方的上下文占用 */
+.context-usage {
+  max-width: 780px;
+  margin: 8px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  letter-spacing: 0.01em;
+  user-select: none;
+}
+.context-usage .ctx-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.85;
+}
+.context-usage.warn {
+  color: #c48a1a;
+}
+.context-usage.danger {
+  color: var(--danger);
 }
 /* ---------- 高风险审批面板 ---------- */
 .approval-panel {
@@ -2509,11 +2659,13 @@ button.sm {
   position: fixed;
   inset: 0;
   z-index: 55;
+  pointer-events: none;
 }
 .model-pop {
   position: fixed;
   width: 300px;
   background: var(--surface);
+  pointer-events: auto;
   border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow: var(--shadow-pop);

@@ -310,7 +310,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   color: var(--text);
 }
 .nav-btn.active {
-  background: var(--accent-weak, rgba(23, 126, 91, 0.12));
+  background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
 }

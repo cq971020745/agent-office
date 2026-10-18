@@ -1,4 +1,4 @@
-# Agent Office
+# 澄台（CHENG）
 
 领域术语以 [CONTEXT.md](CONTEXT.md) 为准，已确认的取舍以 [docs/adr/](docs/adr/) 为准。这里只写下次改代码时必须遵守的边界。
 
@@ -19,7 +19,7 @@
 
 - 侧栏嵌入既有工作台（知识空间、文档、问答）。不要重做这些页面，也不要嵌入 `/system/user`。
 - 知识库页面把 `Admin-Token` 放在 localStorage，所以必须由本服务代理 `/new-general-rag-kb`。
-- `apps/desktop/src/renderer/index.html` 的 CSP `frame-src` 必须放行 API 源，否则工作台是空白页。
+- `apps/desktop/src/renderer/index.html` 的 CSP：`frame-src` 与 `img-src` 都必须放行 API 源（否则知识库工作台空白；对话气泡里的工作区图片裂图）。
 
 ## 专家、技能与连接器
 
@@ -40,3 +40,10 @@
 ## 桌面预览与标注
 
 - 内嵌 `<webview>` 不要开 `allowpopups`（guest 弹窗会变成空白窗）。页面截图走主进程 `captureWebContents`。
+- 对话/预览里的工作区图片走 `GET /tasks/:id/workspace/file`：按扩展名设 `image/*`，`Content-Disposition: inline`。MIME 错误或接口 500 都会让气泡 `<img>` 裂图。
+
+## Pi 插件与对外客户端
+
+- 澄台对外发客户端：任务用的 Pi 包必须进平台 `{DATA_DIR}/agent`（见 `apps/server/src/packages.ts`），随服务启动安装。不要依赖操作者本机 `~/.pi`。
+- 仅终端 TUI 的扩展（statusbar / sidebar / pi-git-ui 等）不要当产品依赖；可见能力做进桌面（会话上下文占用、任务顶栏 Git 面板等）。
+- 取舍见 [docs/adr/0008-product-shipped-pi-packages.md](docs/adr/0008-product-shipped-pi-packages.md)。

@@ -2,6 +2,9 @@
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { fetchCaptcha, login, setToken, setUsername } from "../api";
+import ThemePicker from "../components/ThemePicker.vue";
+import LoginHeroArt from "../components/LoginHeroArt.vue";
+import { APP_MARK, APP_NAME, APP_TAGLINE } from "../brand";
 
 const router = useRouter();
 const username = ref("");
@@ -101,22 +104,25 @@ function authErrorMessage(err: unknown): string {
 }
 
 const FEATURES = [
-  { title: "自主执行", desc: "Agent 在独立工作区里自主读写文件、完成任务" },
-  { title: "过程透明", desc: "每一步思考与工具调用实时可见，随时可干预" },
-  { title: "成果沉淀", desc: "报告、网页、代码等成果物自动归档，随时取用" },
+  { title: "自主执行", desc: "独立工作区读写与交付" },
+  { title: "过程透明", desc: "思考与工具调用可干预" },
+  { title: "成果沉淀", desc: "报告网页代码自动归档" },
 ];
 </script>
 
 <template>
   <div class="wrap">
     <aside class="brand-panel">
+      <div class="brand-noise" aria-hidden="true" />
       <div class="brand-top">
-        <span class="logo">A</span>
-        <span class="brand-name">Agent Office</span>
+        <span class="logo">{{ APP_MARK }}</span>
+        <span class="brand-name">{{ APP_NAME }}</span>
       </div>
       <div class="brand-main">
-        <h1>把重复的工作<br />交给 Agent</h1>
-        <p class="tagline">你的 AI 数字员工办公室 —— 派发任务，Agent 自主完成，成果直接交付。</p>
+        <p class="eyebrow">智能体办公台</p>
+        <h1>把重复的工作<br />交给智能体</h1>
+        <p class="tagline">派发任务，Agent 自主完成，成果直接交付。</p>
+        <LoginHeroArt />
         <ul class="features">
           <li v-for="f in FEATURES" :key="f.title">
             <span class="check">
@@ -129,10 +135,13 @@ const FEATURES = [
           </li>
         </ul>
       </div>
-      <p class="copyright">Agent Office · 团队级 Agent 工作台</p>
+      <p class="copyright">{{ APP_NAME }} · {{ APP_TAGLINE }}</p>
     </aside>
 
     <main class="form-panel">
+      <div class="form-toolbar">
+        <ThemePicker variant="inline" />
+      </div>
       <form class="box" @submit.prevent="submit">
         <h2>欢迎回来</h2>
         <p class="sub">使用企业知识库账号登录</p>
@@ -199,15 +208,55 @@ const FEATURES = [
   min-height: 100vh;
 }
 .brand-panel {
+  position: relative;
   flex: 1.15;
+  overflow: hidden;
   background:
     radial-gradient(640px 420px at 80% -10%, rgba(255, 255, 255, 0.12), transparent),
-    radial-gradient(520px 380px at -10% 110%, rgba(59, 161, 132, 0.28), transparent),
-    linear-gradient(160deg, #0e3d2e, #071f18 70%);
+    radial-gradient(520px 380px at -10% 110%, rgba(var(--accent-rgb), 0.32), transparent),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--accent) 42%, #0a1620),
+      color-mix(in srgb, var(--accent) 18%, #071018) 70%
+    );
   color: #fff;
-  padding: 36px 48px;
+  padding: 32px 44px 28px;
   display: flex;
   flex-direction: column;
+}
+.brand-noise {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.18;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.14) 0.6px, transparent 0.7px),
+    linear-gradient(135deg, transparent 40%, rgba(255, 255, 255, 0.03) 50%, transparent 60%);
+  background-size: 5px 5px, 100% 100%;
+  mix-blend-mode: soft-light;
+}
+.brand-panel > *:not(.brand-noise) {
+  position: relative;
+  z-index: 1;
+}
+/* 玻璃态：左侧品牌区也吃深浅（底图压暗 + 半透明罩层） */
+:root[data-theme="glass"] .brand-panel {
+  background:
+    linear-gradient(var(--glass-brand), var(--glass-brand)),
+    radial-gradient(640px 420px at 80% -10%, rgba(255, 255, 255, 0.1), transparent),
+    radial-gradient(
+      520px 380px at -10% 110%,
+      rgba(var(--accent-rgb), var(--glass-accent-glow)),
+      transparent
+    ),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--accent) 38%, #0a1620),
+      color-mix(in srgb, var(--accent) 14%, #071018) 70%
+    );
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.45)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.45)) saturate(var(--glass-saturate));
+  border-right: 1px solid var(--border);
 }
 .brand-top {
   display: flex;
@@ -218,10 +267,11 @@ const FEATURES = [
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #177e5b, #2f9d75);
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
   font-weight: 800;
-  font-size: 17px;
+  font-size: 15px;
+  line-height: 1;
   display: grid;
   place-items: center;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
@@ -236,60 +286,77 @@ const FEATURES = [
   display: flex;
   flex-direction: column;
   justify-content: center;
-  max-width: 440px;
+  max-width: 520px;
+  padding: 12px 0 8px;
+}
+.eyebrow {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
 }
 .brand-main h1 {
-  margin: 0 0 14px;
-  font-size: 34px;
-  line-height: 1.28;
-  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+  font-size: clamp(28px, 3.4vw, 36px);
+  line-height: 1.22;
+  letter-spacing: -0.02em;
   color: #fff;
 }
 .tagline {
-  margin: 0 0 30px;
+  margin: 0 0 8px;
   color: rgba(255, 255, 255, 0.66);
   font-size: 14px;
-  line-height: 1.7;
+  line-height: 1.65;
+  max-width: 36em;
 }
 .features {
   list-style: none;
-  margin: 0;
+  margin: 10px 0 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 .features li {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: flex-start;
+  padding: 10px 11px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
 }
 .check {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: rgba(47, 157, 117, 0.3);
-  border: 1px solid rgba(47, 157, 117, 0.55);
+  background: rgba(var(--accent-rgb), 0.35);
+  border: 1px solid rgba(var(--accent-rgb), 0.55);
   display: grid;
   place-items: center;
   flex-shrink: 0;
   margin-top: 1px;
 }
 .check .icon {
-  width: 12px;
-  height: 12px;
-  color: #6fd3ab;
+  width: 11px;
+  height: 11px;
+  color: #fff;
   stroke-width: 2.4;
 }
 .features strong {
   display: block;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 650;
+  margin-bottom: 2px;
 }
 .features em {
   font-style: normal;
-  font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.55);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.52);
 }
 .copyright {
   margin: 0;
@@ -297,12 +364,28 @@ const FEATURES = [
   color: rgba(255, 255, 255, 0.35);
 }
 .form-panel {
+  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--bg);
   padding: 24px;
+}
+.form-toolbar {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 5;
+}
+:root[data-theme="glass"] .form-panel {
+  background: transparent;
+}
+:root[data-theme="glass"] .box {
+  background: var(--surface);
+  border-color: var(--border);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }
 .box {
   width: 360px;
@@ -443,6 +526,11 @@ label span,
 .link {
   align-self: center;
   font-size: 13px;
+}
+@media (max-width: 1100px) {
+  .features {
+    grid-template-columns: 1fr;
+  }
 }
 @media (max-width: 860px) {
   .brand-panel {

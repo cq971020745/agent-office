@@ -93,6 +93,21 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Rename DMG to ASCII for GitHub Release
+        if: ${{ inputs.release_tag != '' }}
+        working-directory: apps/desktop/release
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in *.dmg; do
+            case "$f" in
+              *-mac-arm64.dmg) mv -f "$f" "Muni-${{ inputs.release_tag#v }}-mac-arm64.dmg" ;;
+              *-mac-x64.dmg)   mv -f "$f" "Muni-${{ inputs.release_tag#v }}-mac-x64.dmg" ;;
+              *) echo "skip $f" ;;
+            esac
+          done
+          ls -lah
+
       - name: Publish to GitHub Release
         if: ${{ inputs.release_tag != '' }}
         uses: softprops/action-gh-release@v2
@@ -102,7 +117,8 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            apps/desktop/release/*.dmg
+            apps/desktop/release/Muni-*.dmg
+          fail_on_unmatched_files: true
           body: |
             木牛流马桌面客户端（Mac）。
 

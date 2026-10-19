@@ -280,8 +280,10 @@ materializeLinkedPackage(path.join(deps, "@office", "shared"), sharedStage);
 const tgz = path.join(serverStage, "deps.tgz");
 console.log("[stage] pack deps.tgz");
 if (fs.existsSync(tgz)) fs.rmSync(tgz, { force: true });
-// -h：跟随符号链接/junction，把真实文件打进归档
-execSync(`tar -czhf "${tgz}" -C "${deps}" .`, { stdio: "inherit" });
+// -h：跟随符号链接/junction，把真实文件打进归档。
+// 输出用相对路径（cwd 定位到 serverStage）：GNU tar 会把 "D:\..." 里的 D: 当远程主机名，
+// Windows 自带 bsdtar 与 GNU tar 都能跑相对路径，跨 shell 稳定。
+execSync(`tar -czhf deps.tgz -C "${deps}" .`, { cwd: serverStage, stdio: "inherit" });
 fs.writeFileSync(path.join(serverStage, "deps.version"), `${serverPkg.version}\n`, "utf8");
 const tgzMb = (fs.statSync(tgz).size / (1024 * 1024)).toFixed(1);
 console.log(`[stage] deps.tgz ${tgzMb}MB`);

@@ -96,13 +96,16 @@ jobs:
       - name: Rename DMG to ASCII for GitHub Release
         if: ${{ inputs.release_tag != '' }}
         working-directory: apps/desktop/release
+        env:
+          REL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           shopt -s nullglob
+          ver="${REL_TAG#v}"
           for f in *.dmg; do
             case "$f" in
-              *-mac-arm64.dmg) mv -f "$f" "Muni-${{ inputs.release_tag#v }}-mac-arm64.dmg" ;;
-              *-mac-x64.dmg)   mv -f "$f" "Muni-${{ inputs.release_tag#v }}-mac-x64.dmg" ;;
+              *-mac-arm64.dmg) mv -f "$f" "Muni-$ver-mac-arm64.dmg" ;;
+              *-mac-x64.dmg)   mv -f "$f" "Muni-$ver-mac-x64.dmg" ;;
               *) echo "skip $f" ;;
             esac
           done

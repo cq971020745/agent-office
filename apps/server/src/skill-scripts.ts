@@ -20,7 +20,7 @@ const MAX_OUTPUT_BUFFER = 10 * 1024 * 1024;
  * 凭证边车：wps365-env 技能的提取脚本会把登录态（WPS_SID 等）写入 ~/.wps365/env.json。
  * 服务端与 run_skill_script 子进程都以它为兜底，环境变量里显式设置的值优先。
  */
-export function wpsEnv(): Record<string, string> {
+function readSidecarEnv(): Record<string, string> {
   const merged: Record<string, string> = {};
   try {
     const sidecar = path.join(os.homedir(), ".wps365", "env.json");
@@ -31,20 +31,36 @@ export function wpsEnv(): Record<string, string> {
   } catch {
     // 边车不存在或损坏：继续用进程环境
   }
-  for (const k of [
-    "WPS_SID",
-    "PRIVATE",
-    "X_ORIGIN",
-    "WPS_ENCRYPT",
-    "CLOUD_IDE",
-    "WPS_CLOUD_GATEWAY",
-    "RAGFLOW_BASE_URL",
-    "RAGFLOW_API_KEY",
-  ]) {
+  return merged;
+}
+
+const WPS_ENV_KEYS = [
+  "WPS_SID",
+  "PRIVATE",
+  "X_ORIGIN",
+  "WPS_ENCRYPT",
+  "CLOUD_IDE",
+  "WPS_CLOUD_GATEWAY",
+  "RAGFLOW_BASE_URL",
+  "RAGFLOW_API_KEY",
+] as const;
+
+export function wpsEnv(): Record<string, string> {
+  const merged = readSidecarEnv();
+  for (const k of WPS_ENV_KEYS) {
     const v = process.env[k];
     if (v) merged[k] = v;
   }
   return merged;
+}
+
+/**
+ * 只读边车凭证（不做进程环境覆盖）。wps365-env ensure --refresh 重导登录态后
+ * 重试脚本时用它压在 env 最后：服务进程里若还留着启动时的旧 WPS_SID，
+ * 不覆盖会让旧值压住刚刷新的边车，重试照样 401。
+ */
+export function wpsSidecarEnv(): Record<string, string> {
+  return readSidecarEnv();
 }
 
 /** WPS 登录态是否已配置（决定同步按钮 / @ 数据源是否可用） */
@@ -64,13 +80,16 @@ export interface SkillScriptResult {
 /**
  * 在已安装技能目录内执行打包脚本（路径越狱防护：仅限技能目录下、仅限 .py）。
  * 子进程继承服务端环境 + WPS 边车凭证；禁止写 pyc 以免污染技能目录。
+ * PYTHONWARNINGS=ignore：macOS 系统 Python（LibreSSL）跑 urllib3 v2 会把
+ * NotOpenSSLWarning 刷进 stderr，污染结构化错误报告，只屏蔽 warning 通道、不影响报错。
  */
 export async function runSkillScript(
   skill: string,
   script: string,
   args: string[] = [],
   timeoutMs = MAX_TIMEOUT_MS,
-  agentId?: string
+  agentId?: string,
+  envOverride?: Record<string, string>
 ): Promise<SkillScriptResult> {
   if (!/^[\w\u4e00-\u9fa5-]{1,64}$/.test(skill)) throw new Error("技能名不合法");
   const skillDir = agentId ? skillDirectory(agentId, skill) : path.join(SKILLS_DIR, skill);
@@ -83,7 +102,13 @@ export async function runSkillScript(
   try {
     const res = await execFileAsync(pythonBin(), [scriptAbs, ...args], {
       cwd: skillDir,
-      env: { ...process.env, ...wpsEnv(), PYTHONDONTWRITEBYTECODE: "1" },
+      env: {
+        ...process.env,
+        ...wpsEnv(),
+        PYTHONDONTWRITEBYTECODE: "1",
+        PYTHONWARNINGS: "ignore",
+        ...envOverride,
+      },
       timeout: timeoutMs,
       maxBuffer: MAX_OUTPUT_BUFFER,
       windowsHide: true,

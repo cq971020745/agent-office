@@ -60,6 +60,24 @@ describe("runSkillScript", () => {
   it("脚本不存在时报可读错误", async () => {
     await assert.rejects(() => runSkillScript("demo-skill", "skills/demo/missing.py"), /脚本不存在/);
   });
+
+  it("envOverride 压过进程环境（ensure --refresh 重导后边车优先重试的场景）", async () => {
+    process.env.WPS_SID = "stale-env-sid";
+    try {
+      const res = await runSkillScript("demo-skill", "skills/demo/run.py", [], 30_000, undefined, {
+        WPS_SID: "fresh-sidecar-sid",
+      });
+      assert.ok(res.stdout.includes("SID=fresh-sidecar-sid"));
+    } finally {
+      delete process.env.WPS_SID;
+    }
+  });
+
+  it("子进程屏蔽 Python 警告噪音（macOS LibreSSL + urllib3 v2 的 NotOpenSSLWarning）", async () => {
+    fs.writeFileSync(path.join(skillDir, "skills", "demo", "warn.py"), "import warnings\nwarnings.warn('noise')\nprint('done')");
+    const res = await runSkillScript("demo-skill", "skills/demo/warn.py", [], 30_000);
+    assert.equal(res.stderr, "");
+  });
 });
 
 describe("skillScriptTool", () => {

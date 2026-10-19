@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { WpsContacts, WpsDirectoryEntry, WpsMentionItem, WpsMentionType, WpsProfile } from "@office/shared";
 import { currentUser, getUserPhone } from "../auth.js";
 import { db, now } from "../db.js";
-import { extractLastJsonBlock, runSkillScript, wpsConfigured, WPS_SKILL_NAME } from "../skill-scripts.js";
+import { extractLastJsonBlock, runSkillScript, wpsConfigured, wpsSidecarEnv, WPS_SKILL_NAME } from "../skill-scripts.js";
+import { isWpsSessionError, runEnvGate, stripWarningNoise } from "../wps-env-gate.js";
 
 // ---------- 各数据源脚本输出的归一化（正文 Markdown 忽略，只解析末尾 JSON 围栏） ----------
 
@@ -161,6 +162,56 @@ function upsertProfile(userId: string, profile: WpsProfile): void {
   ).run(userId, JSON.stringify(profile), profile.syncedAt);
 }
 
+// ---------- 同步（带环境闸门自愈） ----------
+
+/** 手机号不一致等业务性失败：直接以对应状态码返回，不再触发环境闸门 */
+class WpsSyncError extends Error {
+  constructor(
+    readonly code: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+/** 跑 user-current 脚本拿当前登录账号（machine-readable 数据在末尾 JSON 围栏里） */
+async function fetchMeBase(envOverride?: Record<string, string>): Promise<Record<string, unknown>> {
+  const res = await runSkillScript(WPS_SKILL_NAME, "skills/user-current/run.py", ["me_base"], 30_000, undefined, envOverride);
+  const me = extractLastJsonBlock<Record<string, unknown>>(res.stdout);
+  if (!me?.id) {
+    const detail = stripWarningNoise((res.stderr || res.stdout || "无输出").trim()).slice(0, 300);
+    throw new Error(`脚本未返回账号信息：${detail}`);
+  }
+  return me;
+}
+
+function profileFrom(me: Record<string, unknown>): WpsProfile {
+  const depts = Array.isArray(me.depts) ? (me.depts as AnyRecord[]) : [];
+  return {
+    id: clean(me.id),
+    name: clean(me.nick_name) || clean(me.name) || clean(me.user_name),
+    defDeptId: clean(me.def_dept_id) || clean(depts[0]?.id),
+    deptName: clean(depts[0]?.name),
+    deptPath: clean(depts[0]?.abs_path),
+    email: clean(me.email),
+    phone: clean(me.phone),
+    avatar: clean(me.avatar),
+    syncedAt: now(),
+  };
+}
+
+/** 账号落库前的校验（手机号一致性）与写缓存；失败抛 WpsSyncError */
+function persistSyncedProfile(userId: string, me: Record<string, unknown>): { configured: true; profile: WpsProfile } {
+  const profile = profileFrom(me);
+  const kbPhone = fullPhone(getUserPhone(userId));
+  const wpsPhone = fullPhone(profile.phone);
+  if (kbPhone && wpsPhone && kbPhone !== wpsPhone) {
+    throw new WpsSyncError(409, "紫金协作手机号与企业知识库账号不一致，未关联");
+  }
+  upsertProfile(userId, profile);
+  return { configured: true, profile };
+}
+
 // ---------- 全量通讯录（组织结构化） ----------
 
 const DIRECTORY_TTL_MS = 30 * 60_000;
@@ -272,42 +323,39 @@ export function registerWpsRoutes(app: FastifyInstance): void {
     };
   });
 
-  // 设置页「同步」按钮：跑 user-current 脚本拿当前登录账号并缓存
+  // 设置页「同步」按钮：跑 user-current 脚本拿当前登录账号并缓存。
+  // 登录态缺失/过期时走内置专家包的 wps365-env 环境闸门（ensure / ensure --refresh）
+  // 从本机紫金协作客户端重新导入会话再重试一次，见 docs 里的踩坑经验。
   app.post("/wps/sync", { onRequest: [app.authenticate] }, async (req, reply) => {
+    const user = currentUser(req);
     if (!wpsConfigured()) {
-      return reply.code(409).send({
-        error: "WPS 登录态未配置：请在本机完成紫金协作登录，或检查 ~/.wps365/env.json 与 WPS_SID 环境变量",
-      });
+      // 首次配置：直接跑 ensure，从本机已登录的紫金协作导入，免去手工脚本
+      const gate = await runEnvGate(false);
+      if (!gate.ready) {
+        return reply.code(409).send({ error: `WPS 登录态未配置：${gate.message}` });
+      }
     }
     try {
-      const res = await runSkillScript(WPS_SKILL_NAME, "skills/user-current/run.py", ["me_base"], 30_000);
-      const me = extractLastJsonBlock<Record<string, unknown>>(res.stdout);
-      if (!me?.id) {
-        const detail = (res.stderr || res.stdout || "无输出").trim().slice(0, 300);
-        return reply.code(502).send({ error: `脚本未返回账号信息：${detail}` });
+      return persistSyncedProfile(user.id, await fetchMeBase());
+    } catch (firstErr) {
+      if (firstErr instanceof WpsSyncError) return reply.code(firstErr.code).send({ error: firstErr.message });
+      const firstMessage = stripWarningNoise(String((firstErr as Error).message ?? firstErr));
+      if (!isWpsSessionError(firstMessage)) {
+        return reply.code(502).send({ error: `WPS 脚本执行失败：${firstMessage}` });
       }
-      const depts = Array.isArray(me.depts) ? (me.depts as AnyRecord[]) : [];
-      const profile: WpsProfile = {
-        id: clean(me.id),
-        name: clean(me.nick_name) || clean(me.name) || clean(me.user_name),
-        defDeptId: clean(me.def_dept_id) || clean(depts[0]?.id),
-        deptName: clean(depts[0]?.name),
-        deptPath: clean(depts[0]?.abs_path),
-        email: clean(me.email),
-        phone: clean(me.phone),
-        avatar: clean(me.avatar),
-        syncedAt: now(),
-      };
-      const user = currentUser(req);
-      const kbPhone = fullPhone(getUserPhone(user.id));
-      const wpsPhone = fullPhone(profile.phone);
-      if (kbPhone && wpsPhone && kbPhone !== wpsPhone) {
-        return reply.code(409).send({ error: "紫金协作手机号与企业知识库账号不一致，未关联" });
+      // 会话失效（401/403）：ensure --refresh 从紫金协作客户端重导登录态，再重试一次
+      const gate = await runEnvGate(true);
+      if (!gate.ok) {
+        return reply.code(502).send({ error: `WPS 登录态已失效，自动重新导入未成功：${gate.message}` });
       }
-      upsertProfile(user.id, profile);
-      return { configured: true, profile };
-    } catch (err) {
-      return reply.code(502).send({ error: `WPS 脚本执行失败：${String((err as Error).message ?? err)}` });
+      try {
+        // 重试时边车凭证优先：服务进程环境里可能还留着启动时的旧 WPS_SID
+        return persistSyncedProfile(user.id, await fetchMeBase(wpsSidecarEnv()));
+      } catch (retryErr) {
+        if (retryErr instanceof WpsSyncError) return reply.code(retryErr.code).send({ error: retryErr.message });
+        const retryMessage = stripWarningNoise(String((retryErr as Error).message ?? retryErr));
+        return reply.code(502).send({ error: `WPS 登录态已更新，但同步仍失败：${retryMessage}` });
+      }
     }
   });
 

@@ -2,6 +2,23 @@
 
 记录平台每次迭代的功能、修复与行为变化。领域术语见 [CONTEXT.md](CONTEXT.md)。
 
+## 2026-10-19（二十五）
+
+### 新增
+
+- **登录页书法标题**：「木牛流马」主标题改用毛笔楷书（Ma Shan Zheng，OFL），按字子集化后仅 2.2KB 内进安装包（`renderer/src/assets/fonts/`），颜色与排版不变。
+- **牛马桌宠开关与拖拽**：外观面板新增「牛马桌宠」开关（默认开，登录页与主界面同步生效）；开启时可按绘画区域拖拽换位（SVG 留白处点击穿透），位置记忆在 localStorage（`agent-office-muni-pos`），默认右下角。
+- **WPS 同步登录态自愈**：`/wps/sync` 遇 401/403 会话失效时，自动执行内置专家包 wps365-env 的 `ensure --refresh` 从本机紫金协作客户端重导登录态，再以边车凭证优先的环境重试一次（`apps/server/src/wps-env-gate.ts`，见 [ADR 0009](docs/adr/0009-wps-env-gate-self-heal.md)）；首次未配置也先跑 `ensure` 免手工脚本。技能脚本子进程统一 `PYTHONWARNINGS=ignore`，macOS LibreSSL + urllib3 v2 的 NotOpenSSLWarning 不再污染错误文本。
+
+### 修复
+
+- **玻璃态浮层互相透底**：模型/专家/附件下拉、右键菜单、@ 弹层、外观面板等悬浮层改用更实的 `--glass-pop` 底色（透明度随深浅滑杆 0.6→0.88）+ 毛玻璃模糊，不再透出底层正文。
+- **首页「配置自定义模型」不跳转**：原跳 `/admin` 被管理员守卫弹回首页，改跳 `/models`（模型供应商页，与任务详情页「配置模型」一致）。
+
+### 变更
+
+- **发布 0.1.1 并部署官网**；发布链路两处修复：`pack-mac.yml` 重命名步骤的表达式语法错误（此前工作流无法派发）；`stage-server.mjs` 打 deps.tgz 改相对路径调 tar（GNU tar 会把 `D:\...` 盘符当远程主机名，Windows Git Bash 打包必挂）。
+
 ## 2026-10-18（二十四）
 
 ### 新增

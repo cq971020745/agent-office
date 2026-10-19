@@ -75,6 +75,7 @@ Node 后端 (Fastify + TS) ——单容器
 > 状态注记十三（2026-10-18）：会话权限预选——`tasks.access_mode`（plan / confirm / autonomous / full），发送前选定；工具闸门执行时现查档位。计划模式对齐 Pi plan-mode（只读 + terminal 白名单 + 先出计划再确认），确认后升为 autonomous。专家 deny 仍优先。
 > 状态注记十四（2026-10-18）：任务详情预览区内嵌 Electron `<webview>` 浏览器与网页标注：点选元素 → 说明 → 截图附件回灌任务对话（非 pi-annotate 外置 Chrome 扩展方案）。
 > 状态注记十五（2026-10-18）：侧栏「项目」= `custom_workspace=1` 的用户自选目录（专家常驻目录不算）；`POST /projects/detach` 只取消归组。用户消息 `meta.attachments` 回传气泡；图片内联 + 灯箱。`PATCH /tasks/:id/model` 追问换模型并 `invalidateSession`。webview 禁用 `allowpopups`，截图走主进程 `captureWebContents`。
+> 状态注记十六（2026-10-19）：桌面 0.1.1——登录页标题用 Ma Shan Zheng 字体子集（2.2KB 随包）；玻璃态浮层用 `--glass-pop` 实底（0.6→0.88 随深浅）止互相透底；牛马桌宠外观可开关、可拖拽记忆位置（`agent-office-muni-pos`）。WPS 同步接入 wps365-env 环境闸门自愈（401/403 自动 `ensure --refresh` 重导 + 边车优先重试，见 ADR 0009）；首页「配置自定义模型」改跳 `/models`（`/admin` 有管理员守卫）。
 
 1. 代码执行工具 + 每任务 Docker 容器（pi 官方 containerization 路线；`run_code` 已提供逐次调用的容器隔离，剩余为每任务常驻容器升级）
 2. 用户自建 agent（模型/提示词/工具组合）

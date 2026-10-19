@@ -30,6 +30,7 @@
 ## 紫金协作
 
 - 两边都是完整 11 位手机号且不一致时，拒绝关联。空号或脱敏时仍保存用户同步来的紫金协作用户编号。
+- WPS 同步遇 401/403 会话失效，走 `apps/server/src/wps-env-gate.ts` 执行内置包 wps365-env 的 `ensure --refresh` 重导后重试，重试时边车凭证必须压过进程环境。不要绕过闸门手工拼 Cookie，也不要让用户 F12 复制。取舍见 [docs/adr/0009-wps-env-gate-self-heal.md](docs/adr/0009-wps-env-gate-self-heal.md)。
 
 ## 任务工作区与项目
 

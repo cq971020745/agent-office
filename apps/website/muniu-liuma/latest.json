@@ -7,7 +7,12 @@
     "mac-arm64": "木牛流马-0.1.0-mac-arm64.dmg",
     "mac-x64": "木牛流马-0.1.0-mac-x64.dmg"
   },
+  "githubAssets": {
+    "win-x64": "Muni-0.1.0-win-x64-Setup.exe",
+    "mac-arm64": "Muni-0.1.0-mac-arm64.dmg",
+    "mac-x64": "Muni-0.1.0-mac-x64.dmg"
+  },
   "notes": {
-    "mac": "未签名包；若提示已损坏，执行 xattr -cr /Applications/木牛流马.app"
+    "mac": "未使用 Apple 开发者证书；若提示已损坏，执行 xattr -cr /Applications/木牛流马.app。勿用微信转发。"
   }
 }

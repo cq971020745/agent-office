@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>木牛流马 · 下载</title>
+  <meta name="description" content="木牛流马 — 智能体办公台。驮过十万大军的粮，现在给你打工。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #1a120c;
+      --bg1: #2c1c12;
+      --wood: #c9955a;
+      --wood-light: #f0d9b0;
+      --ink: #f6efe4;
+      --muted: rgba(246, 239, 228, 0.68);
+      --accent: #e8a54b;
+      --line: rgba(240, 217, 176, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: "DM Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 90% 60% at 70% 10%, rgba(232, 165, 75, 0.18), transparent 55%),
+        radial-gradient(ellipse 70% 50% at 10% 80%, rgba(122, 74, 34, 0.45), transparent 50%),
+        linear-gradient(165deg, var(--bg1), var(--bg0) 55%, #0f0b08);
+      min-height: 100vh;
+    }
+
+    .wrap {
+      width: min(960px, calc(100% - 2.5rem));
+      margin: 0 auto;
+      padding: 4.5rem 0 3rem;
+    }
+
+    .brand {
+      font-family: "Noto Serif SC", "Songti SC", serif;
+      font-weight: 700;
+      font-size: clamp(2.75rem, 8vw, 4.5rem);
+      letter-spacing: 0.06em;
+      line-height: 1.05;
+      margin: 0;
+      background: linear-gradient(120deg, var(--wood-light), var(--wood) 45%, #a87438);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .tagline {
+      margin: 0.85rem 0 0;
+      font-size: 1.05rem;
+      color: var(--muted);
+      letter-spacing: 0.12em;
+    }
+
+    .slogan {
+      margin: 1.35rem 0 0;
+      max-width: 28em;
+      font-size: clamp(1.15rem, 2.6vw, 1.45rem);
+      line-height: 1.55;
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    .meta {
+      margin-top: 1.75rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .meta strong { color: var(--wood-light); font-weight: 600; }
+
+    .downloads {
+      margin-top: 2.75rem;
+      display: grid;
+      gap: 0.85rem;
+      max-width: 34rem;
+    }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.2rem;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255, 248, 236, 0.06);
+      color: var(--ink);
+      text-decoration: none;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    }
+    .btn:hover {
+      background: rgba(232, 165, 75, 0.14);
+      border-color: rgba(232, 165, 75, 0.45);
+      transform: translateY(-1px);
+    }
+    .btn .label { font-weight: 600; font-size: 1.02rem; }
+    .btn .sub { display: block; margin-top: 0.2rem; font-size: 0.82rem; color: var(--muted); font-weight: 400; }
+    .btn .chip {
+      flex-shrink: 0;
+      font-size: 0.78rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: 999px;
+      background: rgba(232, 165, 75, 0.2);
+      color: var(--wood-light);
+    }
+
+    .note {
+      margin-top: 2.5rem;
+      padding: 1.15rem 1.25rem;
+      border-left: 3px solid var(--accent);
+      background: rgba(0, 0, 0, 0.28);
+      border-radius: 0 10px 10px 0;
+      max-width: 40rem;
+    }
+    .note h2 {
+      margin: 0 0 0.55rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--wood-light);
+    }
+    .note p, .note li {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.65;
+    }
+    .note ol { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    .note code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.84em;
+      color: var(--wood-light);
+      background: rgba(255,255,255,0.06);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+    .note a { color: var(--accent); }
+
+    .foot {
+      margin-top: 3rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.82rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.5rem;
+    }
+    .foot a { color: var(--wood-light); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .btn { transition: none; }
+      .btn:hover { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <p class="brand" id="brand">木牛流马</p>
+    <p class="tagline">智能体办公台</p>
+    <p class="slogan">驮过十万大军的粮，现在给你打工。</p>
+
+    <div class="meta">
+      <span>当前版本 <strong id="ver">0.1.0</strong></span>
+      <span>企业知识库登录 · 桌面一体包</span>
+    </div>
+
+    <section class="downloads" aria-label="下载安装包" id="downloads">
+      <!-- 由 latest.json 填充；无 JS 时仍有静态兜底 -->
+      <a class="btn" data-platform="win-x64" href="releases/0.1.0/%E6%9C%A8%E7%89%9B%E6%B5%81%E9%A9%AC-0.1.0-win-x64-Setup.exe">
+        <span>
+          <span class="label">Windows</span>
+          <span class="sub">安装包 · x64</span>
+        </span>
+        <span class="chip">下载</span>
+      </a>
+      <a class="btn" data-platform="mac-arm64" href="releases/0.1.0/%E6%9C%A8%E7%89%9B%E6%B5%81%E9%A9%AC-0.1.0-mac-arm64.dmg">
+        <span>
+          <span class="label">macOS · Apple Silicon</span>
+          <span class="sub">M1 / M2 / M3 / M4 · DMG</span>
+        </span>
+        <span class="chip">下载</span>
+      </a>
+      <a class="btn" data-platform="mac-x64" href="releases/0.1.0/%E6%9C%A8%E7%89%9B%E6%B5%81%E9%A9%AC-0.1.0-mac-x64.dmg">
+        <span>
+          <span class="label">macOS · Intel</span>
+          <span class="sub">Intel 芯片 · DMG</span>
+        </span>
+        <span class="chip">下载</span>
+      </a>
+    </section>
+
+    <aside class="note" id="mac-note">
+      <h2>Mac 提示：若提示「已损坏，无法打开」</h2>
+      <p>当前发行包为<strong>未使用 Apple 开发者证书签名</strong>。从浏览器下载后，若系统拦截，在「终端」执行（把路径换成你的安装位置）：</p>
+      <ol>
+        <li><code>xattr -cr /Applications/木牛流马.app</code></li>
+        <li>再双击打开；仍不行可右键图标 →「打开」</li>
+      </ol>
+      <p style="margin-top:0.65rem">请勿用微信等聊天工具转发安装包（会加重隔离属性）。请从本页直接下载。</p>
+    </aside>
+
+    <footer class="foot">
+      <span>备用归档</span>
+      <a id="gh-release" href="https://github.com/cq971020745/agent-office/releases/tag/v0.1.0" target="_blank" rel="noopener">GitHub Release v0.1.0</a>
+    </footer>
+  </main>
+
+  <script>
+    fetch("./latest.json", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || !data.version) return;
+        document.getElementById("ver").textContent = data.version;
+        const gh = document.getElementById("gh-release");
+        if (data.githubRelease) {
+          gh.href = data.githubRelease;
+          gh.textContent = "GitHub Release v" + data.version;
+        }
+        const base = "releases/" + data.version + "/";
+        for (const [key, file] of Object.entries(data.files || {})) {
+          const a = document.querySelector('[data-platform="' + key + '"]');
+          if (a && file) a.href = base + encodeURIComponent(file);
+        }
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "version": "0.1.0",
+  "publishedAt": "2026-10-19",
+  "githubRelease": "https://github.com/cq971020745/agent-office/releases/tag/v0.1.0",
+  "files": {
+    "win-x64": "木牛流马-0.1.0-win-x64-Setup.exe",
+    "mac-arm64": "木牛流马-0.1.0-mac-arm64.dmg",
+    "mac-x64": "木牛流马-0.1.0-mac-x64.dmg"
+  },
+  "notes": {
+    "mac": "未签名包；若提示已损坏，执行 xattr -cr /Applications/木牛流马.app"
+  }
+}

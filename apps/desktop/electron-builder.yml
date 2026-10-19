@@ -46,8 +46,11 @@ nsis:
 portable:
   artifactName: ${productName}-${version}-win-${arch}-Portable.${ext}
 mac:
-  # CI / 无证书时 identity=null（workflow 里也会再传一次）；有 Apple 证书时可在本机覆盖
-  identity: null
+  # "-" = ad-hoc 签名（无需 Apple 开发者账号）。勿用 null：无签名时部分 macOS 会直接报「已损坏」。
+  # 用户从网上下载后仍可能需：xattr -cr /Applications/木牛流马.app
+  identity: "-"
+  gatekeeperAssess: false
+  hardenedRuntime: false
   target:
     - target: dmg
       arch:

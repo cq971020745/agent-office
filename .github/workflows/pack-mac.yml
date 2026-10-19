@@ -1,0 +1,88 @@
+# 在 macOS Runner 上打木牛流马 Mac 安装包（Windows 本机无法可靠交叉编译）
+# 触发：Actions → Pack macOS → Run workflow
+# 注意：未配置 Apple 签名/公证，产物为未签名 dmg；对方首次打开需右键「打开」或在「隐私与安全性」里允许。
+name: Pack macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "架构（arm64=Apple Silicon，x64=Intel，universal=两者各打一份）"
+        type: choice
+        options:
+          - arm64
+          - x64
+          - universal
+        default: arm64
+
+concurrency:
+  group: pack-mac-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pack:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - name: Get pnpm store path
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stage server + build + pack
+        env:
+          # 无 Apple 证书时跳过签名探测，打未签名包
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          set -euo pipefail
+          ARCH="${{ inputs.arch }}"
+          node scripts/stage-server.mjs
+          pnpm --filter @office/desktop build
+          cd apps/desktop
+          case "$ARCH" in
+            arm64)
+              pnpm exec electron-builder --mac --arm64 -c.mac.identity=null
+              ;;
+            x64)
+              pnpm exec electron-builder --mac --x64 -c.mac.identity=null
+              ;;
+            universal)
+              pnpm exec electron-builder --mac --x64 --arm64 -c.mac.identity=null
+              ;;
+          esac
+          echo "=== release ==="
+          ls -lah release || true
+
+      - name: Upload mac artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: muniu-liuma-mac-${{ inputs.arch }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -46,6 +46,8 @@ nsis:
 portable:
   artifactName: ${productName}-${version}-win-${arch}-Portable.${ext}
 mac:
+  # CI / 无证书时 identity=null（workflow 里也会再传一次）；有 Apple 证书时可在本机覆盖
+  identity: null
   target:
     - target: dmg
       arch:

@@ -501,7 +501,7 @@ onBeforeUnmount(() => {
     <div class="stage">
       <div v-if="!hasElectron" class="fallback">
         <p>内嵌浏览器与网页标注仅在桌面客户端可用。</p>
-        <p class="muted">请使用 Electron 打包的澄台客户端打开任务详情。</p>
+        <p class="muted">请使用 Electron 打包的木牛流马客户端打开任务详情。</p>
       </div>
       <template v-else>
         <!-- 不用 allowpopups：guest 弹窗会变成只剩菜单的空白 BrowserWindow -->

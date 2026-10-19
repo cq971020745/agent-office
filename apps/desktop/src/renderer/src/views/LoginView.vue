@@ -4,7 +4,8 @@ import { useRouter } from "vue-router";
 import { fetchCaptcha, login, setToken, setUsername } from "../api";
 import ThemePicker from "../components/ThemePicker.vue";
 import LoginHeroArt from "../components/LoginHeroArt.vue";
-import { APP_MARK, APP_NAME, APP_TAGLINE } from "../brand";
+import MuniBuddy from "../components/MuniBuddy.vue";
+import { APP_MARK, APP_NAME, APP_SLOGAN, APP_TAGLINE } from "../brand";
 
 const router = useRouter();
 const username = ref("");
@@ -119,9 +120,9 @@ const FEATURES = [
         <span class="brand-name">{{ APP_NAME }}</span>
       </div>
       <div class="brand-main">
-        <p class="eyebrow">智能体办公台</p>
-        <h1>把重复的工作<br />交给智能体</h1>
-        <p class="tagline">派发任务，Agent 自主完成，成果直接交付。</p>
+        <p class="eyebrow">{{ APP_TAGLINE }}</p>
+        <h1>{{ APP_NAME }}</h1>
+        <p class="tagline">{{ APP_SLOGAN }}</p>
         <LoginHeroArt />
         <ul class="features">
           <li v-for="f in FEATURES" :key="f.title">
@@ -137,6 +138,8 @@ const FEATURES = [
       </div>
       <p class="copyright">{{ APP_NAME }} · {{ APP_TAGLINE }}</p>
     </aside>
+
+    <MuniBuddy mood="idle" />
 
     <main class="form-panel">
       <div class="form-toolbar">

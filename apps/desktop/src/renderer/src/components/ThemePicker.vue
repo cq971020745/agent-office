@@ -60,14 +60,34 @@ function placePanel(): void {
   if (!trigger) return;
   const rect = trigger.getBoundingClientRect();
   const margin = 12;
-  // 紧贴触发按钮上方，水平尽量落在侧栏内，绝不铺满全屏
   let left = rect.right - PANEL_W;
   left = Math.min(Math.max(margin, left), window.innerWidth - PANEL_W - margin);
+
+  const spaceAbove = rect.top - margin;
+  const spaceBelow = window.innerHeight - rect.bottom - margin;
+  // 登录页按钮在右上角：向上展开会冲出视口，改为向下；侧栏仍优先向上
+  const openBelow = props.variant === "inline" || spaceAbove < 240;
+
+  if (openBelow) {
+    const maxHeight = Math.max(200, Math.min(spaceBelow - 8, window.innerHeight - margin * 2));
+    panelStyle.value = {
+      position: "fixed",
+      left: `${Math.round(left)}px`,
+      top: `${Math.round(rect.bottom + 8)}px`,
+      bottom: "auto",
+      width: `${PANEL_W}px`,
+      maxHeight: `${Math.round(maxHeight)}px`,
+      zIndex: "1300",
+    };
+    return;
+  }
+
   const bottom = Math.max(margin, window.innerHeight - rect.top + 8);
-  const maxHeight = Math.max(180, window.innerHeight - bottom - margin);
+  const maxHeight = Math.max(180, Math.min(spaceAbove - 8, window.innerHeight - bottom - margin));
   panelStyle.value = {
     position: "fixed",
     left: `${Math.round(left)}px`,
+    top: "auto",
     bottom: `${Math.round(bottom)}px`,
     width: `${PANEL_W}px`,
     maxHeight: `${Math.round(maxHeight)}px`,
@@ -341,6 +361,19 @@ watch(open, async (v) => {
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
+  box-shadow: var(--shadow-1, 0 1px 3px rgba(0, 0, 0, 0.08));
+}
+/* 登录页白底上提高对比，避免「白按钮贴白底」 */
+.theme-picker.inline .theme-trigger {
+  background: #fff;
+  border-color: #cfd6d1;
+  color: #1a201d;
+}
+.theme-picker.inline .theme-trigger:hover,
+.theme-picker.inline .theme-trigger.active {
+  background: #f3f5f3;
+  border-color: var(--accent);
+  color: #1a201d;
 }
 .theme-trigger:hover,
 .theme-trigger.active {
@@ -380,7 +413,7 @@ watch(open, async (v) => {
   padding: 14px;
   border-radius: 16px;
   border: 1px solid var(--border-strong);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 92%, #ffffff);
   box-shadow: var(--shadow-pop);
   color: var(--text);
   overflow-x: hidden;

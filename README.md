@@ -124,7 +124,8 @@ pnpm pack:desktop
 
 说明：
 
-- 首次启动会拉起内嵌服务端，并可能下载 `pi-quiver` / `pi-web-access` / `@zhushanwen/pi-smart-context` 等到用户数据目录（`{DATA_DIR}/agent`），需能访问 npm；不要依赖开发机 `~/.pi`。
+- 首次启动会拉起内嵌服务端：把随包的 `deps.tgz` 解压到用户目录（只需一次），并可能下载 `pi-quiver` / `pi-web-access` / `@zhushanwen/pi-smart-context` 到 `{DATA_DIR}/agent`，需能访问 npm；不要依赖开发机 `~/.pi`。
+- 安装包故意不散装上万个 `node_modules` 小文件（否则 NSIS 安装会卡很久）；依赖以单个 `deps.tgz` 进包。
 - 登录仍走企业知识库；接收方需能访问 `KB_BASE_URL`（默认内网知识库）。
 - `doc_to_md` 高保真降级依赖本机 LibreOffice；`run_code` 依赖本机 Docker——未安装时对应能力不可用，其余功能正常。
 

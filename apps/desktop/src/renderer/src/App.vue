@@ -21,7 +21,8 @@ import { confirmDialog } from "./composables/confirm";
 import { toast, toastError } from "./composables/toast";
 import ThemePicker from "./components/ThemePicker.vue";
 import FxLayer from "./components/FxLayer.vue";
-import { APP_MARK, APP_NAME, APP_TAGLINE } from "./brand";
+import MuniBuddy from "./components/MuniBuddy.vue";
+import { APP_MARK, APP_NAME, APP_SLOGAN, APP_TAGLINE } from "./brand";
 import { useTheme } from "./composables/useTheme";
 import { useMicroFx } from "./composables/useMicroFx";
 
@@ -84,6 +85,13 @@ const runningCount = computed(
 const awaitingCount = computed(
   () => allTasks.value.filter((t) => t.status === "awaiting_approval").length
 );
+
+/** 桌宠表情：干活 / 出错 / 待命（有进行中优先显示赶路） */
+const muniMood = computed<"idle" | "working" | "success" | "error">(() => {
+  if (runningCount.value > 0 || awaitingCount.value > 0) return "working";
+  if (allTasks.value.some((t) => t.status === "failed")) return "error";
+  return "idle";
+});
 
 async function refreshRecent(): Promise<void> {
   if (!getToken()) return;
@@ -333,7 +341,7 @@ async function submitWpsSync(): Promise<void> {
           <span class="logo">{{ APP_MARK }}</span>
           <span v-if="!sidebarCollapsed" class="brand-text">
             <span class="name">{{ APP_NAME }}</span>
-            <span class="ver">{{ APP_TAGLINE }}</span>
+            <span class="ver">{{ APP_SLOGAN }}</span>
           </span>
         </RouterLink>
         <button
@@ -492,6 +500,7 @@ async function submitWpsSync(): Promise<void> {
       <RouterView />
     </main>
 
+    <MuniBuddy v-if="loggedIn" :mood="muniMood" />
     <Toasts />
     <ConfirmHost />
 
@@ -659,6 +668,9 @@ async function submitWpsSync(): Promise<void> {
   font-size: 10.5px;
   color: var(--text-3);
   letter-spacing: 0.02em;
+  max-width: 168px;
+  line-height: 1.35;
+  white-space: normal;
 }
 .nav {
   display: flex;

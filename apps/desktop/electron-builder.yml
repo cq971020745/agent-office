@@ -1,6 +1,6 @@
 appId: com.agentoffice.app
-productName: 澄台
-copyright: Copyright © 澄台
+productName: 木牛流马
+copyright: Copyright © 木牛流马
 directories:
   output: release
   buildResources: build
@@ -23,6 +23,8 @@ extraResources:
     to: agent-packs
 # Windows 未开开发者模式时，winCodeSign 解压 darwin 符号链接会失败；一体包不做代码签名
 forceCodeSigning: false
+# maximum 会把安装包压得很小，但解压上万小文件时安装极慢；normal 略增体积、安装快很多
+compression: normal
 win:
   signAndEditExecutable: false
   target:
@@ -37,8 +39,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: 澄台
+  shortcutName: 木牛流马
   artifactName: ${productName}-${version}-win-${arch}-Setup.${ext}
+  # 安装阶段少做校验，缩短卡在「正在安装」的时间
+  differentialPackage: false
 portable:
   artifactName: ${productName}-${version}-win-${arch}-Portable.${ext}
 mac:

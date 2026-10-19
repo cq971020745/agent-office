@@ -12,3 +12,5 @@ __pycache__/
 **/.playwright-cli/
 *.tsbuildinfo
 apps/desktop/release/
+apps/desktop/release-*/
+apps/desktop/release-dist/

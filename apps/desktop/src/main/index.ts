@@ -181,19 +181,72 @@ function registerIpc(): void {
   });
 }
 
+function createSplash(): BrowserWindow {
+  const splash = new BrowserWindow({
+    width: 420,
+    height: 240,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    frame: false,
+    alwaysOnTop: true,
+    show: true,
+    title: APP_NAME,
+    backgroundColor: "#12161c",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><style>
+  html,body{margin:0;height:100%;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#12161c;color:#e8eef5}
+  .box{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center}
+  .mark{width:52px;height:52px;border-radius:14px;background:#c4a574;display:grid;place-items:center;font-size:26px;font-weight:800;color:#1a1208}
+  h1{margin:0;font-size:20px;font-weight:700}
+  p{margin:0;font-size:13px;color:#9aa7b5;line-height:1.5;max-width:320px}
+  .bar{width:220px;height:4px;border-radius:99px;background:#2a3340;overflow:hidden}
+  .bar>i{display:block;height:100%;width:35%;border-radius:99px;background:#c4a574;animation:slide 1.1s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+  </style></head><body><div class="box">
+  <div class="mark">牛</div>
+  <h1>${APP_NAME}</h1>
+  <p id="msg">正在启动…</p>
+  <div class="bar"><i></i></div>
+  </div><script>
+  window.setStatus=function(t){var el=document.getElementById('msg');if(el)el.textContent=t||'正在启动…';};
+  </script></body></html>`;
+  void splash.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  return splash;
+}
+
+function setSplashStatus(splash: BrowserWindow | null, msg: string): void {
+  if (!splash || splash.isDestroyed()) return;
+  void splash.webContents.executeJavaScript(
+    `window.setStatus(${JSON.stringify(msg)})`,
+    true
+  ).catch(() => undefined);
+}
+
 app.whenReady().then(async () => {
   buildChineseMenu();
   registerIpc();
 
+  // 先出启动画面，再解压依赖 / 起服务——否则用户会以为卡死
+  const splash = app.isPackaged ? createSplash() : null;
+
   try {
-    await startBundledServer();
+    await startBundledServer((msg) => setSplashStatus(splash, msg));
   } catch (err) {
+    if (splash && !splash.isDestroyed()) splash.close();
     await showServerStartError(err);
     app.quit();
     return;
   }
 
   createWindow();
+  if (splash && !splash.isDestroyed()) splash.close();
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

@@ -2,6 +2,7 @@
 /**
  * 木牛流马桌宠：无文字气泡，用光色 / 形态表达状态。
  * idle 暖木色慢走 · working 主题色疾走 · success 金辉 · error 赤闪 · curious 瞳孔亮起
+ * 支持拖拽换位（按绘画区域命中，透明处可穿透），位置记忆在 localStorage，默认右下角。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
@@ -9,12 +10,78 @@ const props = defineProps<{
   mood?: "idle" | "working" | "success" | "error" | "curious";
 }>();
 
+const STORAGE_POS = "agent-office-muni-pos";
+const MARGIN = 4;
+
 const mood = computed(() => props.mood ?? "idle");
 const root = ref<HTMLElement | null>(null);
 const pupilX = ref(0);
 const pupilY = ref(0);
 const wink = ref(false);
+const dragging = ref(false);
 let winkTimer = 0;
+
+// ---------- 拖拽换位 ----------
+
+function readStoredPos(): { left: number; top: number } | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_POS) || "") as { left?: unknown; top?: unknown };
+    const left = Number(parsed.left);
+    const top = Number(parsed.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) return null;
+    return { left, top };
+  } catch {
+    return null;
+  }
+}
+
+const pos = ref<{ left: number; top: number } | null>(readStoredPos());
+
+/** 限制在视口内（宽度按当前渲染尺寸量） */
+function clampPos(next: { left: number; top: number }): { left: number; top: number } {
+  const w = root.value?.offsetWidth ?? 118;
+  const h = root.value?.offsetHeight ?? 110;
+  const maxX = Math.max(MARGIN, window.innerWidth - w - MARGIN);
+  const maxY = Math.max(MARGIN, window.innerHeight - h - MARGIN);
+  return {
+    left: Math.min(maxX, Math.max(MARGIN, next.left)),
+    top: Math.min(maxY, Math.max(MARGIN, next.top)),
+  };
+}
+
+let dragPointerId = -1;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+function onDragStart(e: PointerEvent): void {
+  if (!e.isPrimary || dragging.value) return;
+  const el = root.value;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  // 从 right/bottom 锚点切换到 left/top，起始位置取当前渲染位置避免跳动
+  pos.value = { left: r.left, top: r.top };
+  dragPointerId = e.pointerId;
+  dragOffsetX = e.clientX - r.left;
+  dragOffsetY = e.clientY - r.top;
+  dragging.value = true;
+  el.setPointerCapture?.(e.pointerId);
+}
+
+function onDragMove(e: PointerEvent): void {
+  if (!dragging.value || e.pointerId !== dragPointerId) return;
+  pos.value = clampPos({ left: e.clientX - dragOffsetX, top: e.clientY - dragOffsetY });
+}
+
+function onDragEnd(e: PointerEvent): void {
+  if (!dragging.value || e.pointerId !== dragPointerId) return;
+  dragging.value = false;
+  dragPointerId = -1;
+  if (pos.value) localStorage.setItem(STORAGE_POS, JSON.stringify(pos.value));
+}
+
+function onResize(): void {
+  if (pos.value) pos.value = clampPos(pos.value);
+}
 
 function onMove(e: MouseEvent): void {
   const el = root.value;
@@ -40,11 +107,13 @@ function scheduleWink(): void {
 
 onMounted(() => {
   window.addEventListener("mousemove", onMove, { passive: true });
+  window.addEventListener("resize", onResize);
   scheduleWink();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("mousemove", onMove);
+  window.removeEventListener("resize", onResize);
   window.clearTimeout(winkTimer);
 });
 
@@ -68,7 +137,8 @@ const title = computed(() => {
   <aside
     ref="root"
     class="muni"
-    :class="[`mood-${mood}`, { wink }]"
+    :class="[`mood-${mood}`, { wink, dragging }]"
+    :style="pos ? { left: `${pos.left}px`, top: `${pos.top}px`, right: 'auto', bottom: 'auto' } : undefined"
     :title="title"
     aria-hidden="true"
   >
@@ -76,7 +146,15 @@ const title = computed(() => {
     <span class="dust d1" />
     <span class="dust d2" />
 
-    <svg class="ox" viewBox="0 0 140 124" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      class="ox"
+      viewBox="0 0 140 124"
+      xmlns="http://www.w3.org/2000/svg"
+      @pointerdown="onDragStart"
+      @pointermove="onDragMove"
+      @pointerup="onDragEnd"
+      @pointercancel="onDragEnd"
+    >
       <defs>
         <linearGradient id="mb-wood" x1="24" y1="20" x2="120" y2="110" gradientUnits="userSpaceOnUse">
           <stop class="wood-a" stop-color="#f0d9b0" />
@@ -238,6 +316,15 @@ const title = computed(() => {
   height: auto;
   transform-origin: 50% 85%;
   animation: body-bob 0.72s ease-in-out infinite;
+  /* pointer-events 在 aside 上是 none；svg 按 visiblePainted 只命中画出来的形状，留白处可穿透点击 */
+  pointer-events: visiblePainted;
+  cursor: grab;
+}
+.muni.dragging {
+  animation-play-state: paused;
+}
+.muni.dragging .ox {
+  cursor: grabbing;
 }
 .muni .aura {
   position: absolute;

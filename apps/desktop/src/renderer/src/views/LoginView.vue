@@ -6,6 +6,9 @@ import ThemePicker from "../components/ThemePicker.vue";
 import LoginHeroArt from "../components/LoginHeroArt.vue";
 import MuniBuddy from "../components/MuniBuddy.vue";
 import { APP_MARK, APP_NAME, APP_SLOGAN, APP_TAGLINE } from "../brand";
+import { useTheme } from "../composables/useTheme";
+
+const { buddyEnabled } = useTheme();
 
 const router = useRouter();
 const username = ref("");
@@ -139,7 +142,7 @@ const FEATURES = [
       <p class="copyright">{{ APP_NAME }} · {{ APP_TAGLINE }}</p>
     </aside>
 
-    <MuniBuddy mood="idle" />
+    <MuniBuddy v-if="buddyEnabled" mood="idle" />
 
     <main class="form-panel">
       <div class="form-toolbar">
@@ -206,6 +209,12 @@ const FEATURES = [
 </template>
 
 <style scoped>
+/* 登录页标题专用书法字体：只嵌入「木牛流马」四字的子集（约 2KB），其余字符回退系统楷体 */
+@font-face {
+  font-family: "Muni Brush";
+  src: url("../assets/fonts/MaShanZheng-subset.woff2") format("woff2");
+  font-display: swap;
+}
 .wrap {
   display: flex;
   min-height: 100vh;
@@ -302,9 +311,11 @@ const FEATURES = [
 }
 .brand-main h1 {
   margin: 0 0 12px;
-  font-size: clamp(28px, 3.4vw, 36px);
+  font-size: clamp(34px, 4.2vw, 46px);
   line-height: 1.22;
-  letter-spacing: -0.02em;
+  letter-spacing: 0.04em;
+  font-family: "Muni Brush", "STXingkai", "STKaiti", "KaiTi", serif;
+  font-weight: 400;
   color: #fff;
 }
 .tagline {

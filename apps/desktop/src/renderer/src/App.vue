@@ -26,7 +26,7 @@ import { APP_MARK, APP_NAME, APP_SLOGAN, APP_TAGLINE } from "./brand";
 import { useTheme } from "./composables/useTheme";
 import { useMicroFx } from "./composables/useMicroFx";
 
-const { fxEnabled } = useTheme();
+const { fxEnabled, buddyEnabled } = useTheme();
 useMicroFx(fxEnabled);
 
 type ProjectGroup = { key: string; name: string; path: string; tasks: Task[] };
@@ -500,7 +500,7 @@ async function submitWpsSync(): Promise<void> {
       <RouterView />
     </main>
 
-    <MuniBuddy v-if="loggedIn" :mood="muniMood" />
+    <MuniBuddy v-if="loggedIn && buddyEnabled" :mood="muniMood" />
     <Toasts />
     <ConfirmHost />
 

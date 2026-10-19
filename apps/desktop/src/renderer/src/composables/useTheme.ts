@@ -45,6 +45,7 @@ const STORAGE_CUSTOM = "agent-office-accent-custom";
 /** v3：整体再压浅一档，并重置旧深浅记忆 */
 const STORAGE_DEPTH = "agent-office-depth-v3";
 const STORAGE_FX = "agent-office-micro-fx";
+const STORAGE_BUDDY = "agent-office-muni-buddy";
 const DEFAULT_CUSTOM = "#177e5b";
 /** 深浅默认值：0 最浅 → 100 最深；玻璃默认很浅 */
 const DEFAULT_DEPTH: Record<ThemeMode, number> = { light: 22, dark: 38, glass: 10 };
@@ -213,6 +214,8 @@ export function deriveDepthTokens(
   const inputA = lerp(0.015, 0.16, t);
   const panelA = lerp(0.03, 0.4, t);
   const brandA = lerp(0.04, 0.5, t);
+  // 浮层（下拉/右键菜单/弹层）悬浮在正文上，必须比面板实得多，否则与底层内容互相透出
+  const popA = lerp(0.6, 0.88, t);
   const blur = Math.round(lerp(8, 36, t));
   const dim = lerp(0.0, 0.48, t);
   const overlayA = lerp(0.18, 0.58, t);
@@ -232,6 +235,7 @@ export function deriveDepthTokens(
     "--glass-panel": `rgba(16, 22, 32, ${panelA.toFixed(3)})`,
     "--glass-input": `rgba(255, 255, 255, ${inputA.toFixed(3)})`,
     "--glass-brand": `rgba(8, 14, 24, ${brandA.toFixed(3)})`,
+    "--glass-pop": `rgba(17, 24, 36, ${popA.toFixed(3)})`,
     "--glass-accent-glow": accentGlow.toFixed(3),
     "--overlay": `rgba(4, 8, 14, ${overlayA.toFixed(3)})`,
     "--code-bg": `rgba(6, 10, 16, ${lerp(0.32, 0.78, t).toFixed(3)})`,
@@ -332,6 +336,10 @@ function readFxEnabled(): boolean {
   return false; // 默认关闭，避免打扰
 }
 
+function readBuddyEnabled(): boolean {
+  return localStorage.getItem(STORAGE_BUDDY) !== "0"; // 默认开启
+}
+
 /** 把主题写到 <html>，挂载前也可调用以避免闪烁 */
 export function applyThemeToDocument(
   mode: ThemeMode,
@@ -379,6 +387,7 @@ const accentId = ref<AccentId>(readAccentId());
 const customHex = ref(readCustomHex());
 const depthMap = ref<Record<ThemeMode, number>>(readDepthMap());
 const fxEnabled = ref(readFxEnabled());
+const buddyEnabled = ref(readBuddyEnabled());
 
 function persistAndApply(): void {
   localStorage.setItem(STORAGE_MODE, mode.value);
@@ -386,6 +395,7 @@ function persistAndApply(): void {
   localStorage.setItem(STORAGE_CUSTOM, customHex.value);
   localStorage.setItem(STORAGE_DEPTH, JSON.stringify(depthMap.value));
   localStorage.setItem(STORAGE_FX, fxEnabled.value ? "1" : "0");
+  localStorage.setItem(STORAGE_BUDDY, buddyEnabled.value ? "1" : "0");
   applyThemeToDocument(
     mode.value,
     accentId.value,
@@ -432,6 +442,11 @@ export function useTheme() {
     persistAndApply();
   }
 
+  function setBuddyEnabled(next: boolean): void {
+    buddyEnabled.value = next;
+    persistAndApply();
+  }
+
   /** 兼容旧「一键切换浅/深」；玻璃态下切到浅色 */
   function cycleMode(): void {
     const order: ThemeMode[] = ["light", "dark", "glass"];
@@ -446,12 +461,14 @@ export function useTheme() {
     depth,
     depthMap,
     fxEnabled,
+    buddyEnabled,
     activeBaseColor,
     setMode,
     setAccentId,
     setCustomHex,
     setDepth,
     setFxEnabled,
+    setBuddyEnabled,
     cycleMode,
   };
 }

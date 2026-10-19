@@ -105,7 +105,8 @@ function pickModel(providerId: string, modelId: string): void {
 
 function openModelConfig(): void {
   modelOpen.value = false;
-  void router.push("/admin");
+  // /admin 是管理员后台（守卫会把非管理员弹回首页）；模型配置走 /models（模型供应商页）
+  void router.push("/models");
 }
 
 // ---------- 输入框左侧 + 菜单（WorkBuddy 式）：添加文件 / 专家（专家收纳进二级菜单，不再平铺在 hero） ----------

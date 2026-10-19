@@ -209,6 +209,23 @@ body {
   background: var(--surface);
   border-color: var(--border);
 }
+/* 玻璃态浮层（下拉/右键菜单/弹层）悬浮在正文之上：底色用更实的 --glass-pop，避免与底层内容互相透出 */
+:root[data-theme="glass"] .model-pop,
+:root[data-theme="glass"] .plus-pop,
+:root[data-theme="glass"] .agent-sub,
+:root[data-theme="glass"] .am-pop,
+:root[data-theme="glass"] .git-pop,
+:root[data-theme="glass"] .card-menu,
+:root[data-theme="glass"] .menu,
+:root[data-theme="glass"] .project-menu,
+:root[data-theme="glass"] .mention-pop,
+:root[data-theme="glass"] .mention-sub,
+:root[data-theme="glass"] .skill-pop {
+  background: var(--glass-pop);
+  border-color: var(--border-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
 
 ::selection {
   background: rgba(var(--accent-rgb), 0.28);

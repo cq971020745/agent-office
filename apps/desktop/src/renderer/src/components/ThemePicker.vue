@@ -25,12 +25,14 @@ const {
   customHex,
   depth,
   fxEnabled,
+  buddyEnabled,
   activeBaseColor,
   setMode,
   setAccentId,
   setCustomHex,
   setDepth,
   setFxEnabled,
+  setBuddyEnabled,
 } = useTheme();
 
 const route = useRoute();
@@ -280,6 +282,25 @@ watch(open, async (v) => {
         </section>
 
         <section class="block">
+          <div class="fx-toggle">
+            <div class="fx-copy">
+              <p class="block-label">牛马桌宠</p>
+              <p class="depth-hint">右下角的小牛马，开启时可拖拽换位</p>
+            </div>
+            <button
+              type="button"
+              class="fx-switch"
+              role="switch"
+              :aria-checked="buddyEnabled"
+              :title="buddyEnabled ? '关闭牛马桌宠' : '开启牛马桌宠'"
+              @click="setBuddyEnabled(!buddyEnabled)"
+            >
+              <span class="fx-knob" />
+            </button>
+          </div>
+        </section>
+
+        <section class="block">
           <p class="block-label">主题色</p>
           <div class="swatch-grid" role="listbox" aria-label="主题色">
             <button
@@ -420,7 +441,7 @@ watch(open, async (v) => {
   overflow-y: auto;
 }
 :root[data-theme="glass"] .theme-panel {
-  background: var(--surface);
+  background: var(--glass-pop);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
 }

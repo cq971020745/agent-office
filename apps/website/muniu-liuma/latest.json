@@ -3,16 +3,12 @@
   "publishedAt": "2026-10-19",
   "githubRelease": "https://github.com/cq971020745/agent-office/releases/tag/v0.1.0",
   "files": {
-    "win-x64": "木牛流马-0.1.0-win-x64-Setup.exe",
-    "mac-arm64": "木牛流马-0.1.0-mac-arm64.dmg",
-    "mac-x64": "木牛流马-0.1.0-mac-x64.dmg"
-  },
-  "githubAssets": {
     "win-x64": "Muni-0.1.0-win-x64-Setup.exe",
     "mac-arm64": "Muni-0.1.0-mac-arm64.dmg",
     "mac-x64": "Muni-0.1.0-mac-x64.dmg"
   },
   "notes": {
-    "mac": "未使用 Apple 开发者证书；若提示已损坏，执行 xattr -cr /Applications/木牛流马.app。勿用微信转发。"
+    "mac": "未使用 Apple 开发者证书；若提示已损坏，执行 xattr -cr /Applications/木牛流马.app。勿用微信转发。",
+    "web": "桌面一体包内嵌服务端，不占用服务器 8787。浏览器自建请另开端口，勿与 API Hub（本机 8787）冲突。"
   }
 }

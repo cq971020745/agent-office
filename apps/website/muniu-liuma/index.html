@@ -3,218 +3,234 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>木牛流马 · 下载</title>
-  <meta name="description" content="木牛流马 — 智能体办公台。驮过十万大军的粮，现在给你打工。" />
+  <title>木牛流马 · 智能体办公台</title>
+  <meta name="description" content="木牛流马 — 下达任务、围观执行、验收成果物。驮过十万大军的粮，现在给你打工。" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg0: #1a120c;
-      --bg1: #2c1c12;
-      --wood: #c9955a;
-      --wood-light: #f0d9b0;
-      --ink: #f6efe4;
-      --muted: rgba(246, 239, 228, 0.68);
-      --accent: #e8a54b;
-      --line: rgba(240, 217, 176, 0.18);
+      --bg0: #0b1410;
+      --bg1: #102018;
+      --accent: #177e5b;
+      --accent-strong: #106348;
+      --ink: #f3faf6;
+      --muted: rgba(243, 250, 246, 0.68);
+      --line: rgba(23, 126, 91, 0.28);
+      --card: rgba(255, 255, 255, 0.04);
+      --wood-light: #c8ebdc;
     }
-
     * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     html, body { margin: 0; min-height: 100%; }
     body {
       font-family: "DM Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(ellipse 90% 60% at 70% 10%, rgba(232, 165, 75, 0.18), transparent 55%),
-        radial-gradient(ellipse 70% 50% at 10% 80%, rgba(122, 74, 34, 0.45), transparent 50%),
-        linear-gradient(165deg, var(--bg1), var(--bg0) 55%, #0f0b08);
-      min-height: 100vh;
+        radial-gradient(ellipse 80% 50% at 85% -5%, rgba(23, 126, 91, 0.28), transparent 55%),
+        radial-gradient(ellipse 55% 40% at 5% 80%, rgba(16, 99, 72, 0.25), transparent 50%),
+        linear-gradient(165deg, var(--bg1), var(--bg0) 55%, #070c0a);
     }
-
-    .wrap {
-      width: min(960px, calc(100% - 2.5rem));
-      margin: 0 auto;
-      padding: 4.5rem 0 3rem;
+    .wrap { width: min(1080px, calc(100% - 2.5rem)); margin: 0 auto; }
+    .hero {
+      min-height: min(88vh, 760px);
+      padding: 4.2rem 0 2.5rem;
+      display: grid;
+      align-content: center;
+      gap: 0.95rem;
     }
-
     .brand {
       font-family: "Noto Serif SC", "Songti SC", serif;
       font-weight: 700;
-      font-size: clamp(2.75rem, 8vw, 4.5rem);
-      letter-spacing: 0.06em;
+      font-size: clamp(2.8rem, 8vw, 4.6rem);
+      letter-spacing: 0.05em;
       line-height: 1.05;
       margin: 0;
-      background: linear-gradient(120deg, var(--wood-light), var(--wood) 45%, #a87438);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
+      color: #e8fff5;
     }
-
-    .tagline {
-      margin: 0.85rem 0 0;
-      font-size: 1.05rem;
-      color: var(--muted);
-      letter-spacing: 0.12em;
-    }
-
+    .tagline { margin: 0; color: var(--muted); letter-spacing: 0.12em; font-size: 1.02rem; }
     .slogan {
-      margin: 1.35rem 0 0;
-      max-width: 28em;
+      margin: 0.35rem 0 0;
+      max-width: 18em;
       font-size: clamp(1.15rem, 2.6vw, 1.45rem);
-      line-height: 1.55;
-      color: var(--ink);
+      line-height: 1.5;
       font-weight: 500;
     }
-
-    .meta {
-      margin-top: 1.75rem;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem 1.25rem;
-      align-items: center;
-      color: var(--muted);
-      font-size: 0.92rem;
-    }
-
-    .meta strong { color: var(--wood-light); font-weight: 600; }
-
-    .downloads {
-      margin-top: 2.75rem;
-      display: grid;
-      gap: 0.85rem;
-      max-width: 34rem;
-    }
-
+    .cta { margin-top: 1.45rem; display: flex; flex-wrap: wrap; gap: 0.75rem; }
     .btn {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      padding: 1rem 1.2rem;
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      background: rgba(255, 248, 236, 0.06);
-      color: var(--ink);
-      text-decoration: none;
-      transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 0.85rem 1.25rem; border-radius: 12px; border: 1px solid var(--line);
+      text-decoration: none; font-weight: 600;
+      transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
     }
-    .btn:hover {
-      background: rgba(232, 165, 75, 0.14);
-      border-color: rgba(232, 165, 75, 0.45);
-      transform: translateY(-1px);
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-strong)); color: #fff; border-color: transparent; }
+    .btn-ghost { background: var(--card); color: var(--ink); }
+    .btn-ghost:hover { background: rgba(23, 126, 91, 0.16); border-color: rgba(23, 126, 91, 0.5); }
+    .meta { margin-top: 1.1rem; color: var(--muted); font-size: 0.9rem; }
+    .meta strong { color: var(--wood-light); }
+
+    section { padding: 3.2rem 0; }
+    .sec-title {
+      font-family: "Noto Serif SC", serif;
+      font-size: clamp(1.5rem, 3vw, 1.95rem);
+      margin: 0 0 0.5rem;
     }
-    .btn .label { font-weight: 600; font-size: 1.02rem; }
-    .btn .sub { display: block; margin-top: 0.2rem; font-size: 0.82rem; color: var(--muted); font-weight: 400; }
-    .btn .chip {
-      flex-shrink: 0;
-      font-size: 0.78rem;
-      padding: 0.35rem 0.65rem;
-      border-radius: 999px;
-      background: rgba(232, 165, 75, 0.2);
-      color: var(--wood-light);
+    .sec-lead { margin: 0 0 1.6rem; color: var(--muted); max-width: 38em; line-height: 1.65; }
+
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+    @media (max-width: 820px) { .features { grid-template-columns: 1fr; } }
+    .feature {
+      padding: 1.2rem; border: 1px solid var(--line); border-radius: 14px; background: var(--card);
+    }
+    .feature h3 { margin: 0 0 0.4rem; font-size: 1.02rem; color: var(--wood-light); }
+    .feature p { margin: 0; color: var(--muted); font-size: 0.9rem; line-height: 1.65; }
+
+    .shots { display: grid; gap: 1.4rem; }
+    .shot {
+      margin: 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--line);
+      background: #0a100d; box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+    }
+    .shot img { display: block; width: 100%; height: auto; }
+    .shot figcaption {
+      padding: 0.85rem 1.1rem 1.05rem; color: var(--muted); font-size: 0.88rem;
+      border-top: 1px solid var(--line);
+    }
+    .shot figcaption strong { display: block; color: var(--wood-light); margin-bottom: 0.2rem; }
+
+    .downloads { display: grid; gap: 0.85rem; max-width: 36rem; }
+    .dl {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 1rem 1.15rem; border-radius: 12px; border: 1px solid var(--line);
+      background: var(--card); text-decoration: none; color: inherit;
+    }
+    .dl:hover { background: rgba(23, 126, 91, 0.14); border-color: rgba(23, 126, 91, 0.45); }
+    .dl .label { font-weight: 600; }
+    .dl .sub { display: block; margin-top: 0.2rem; font-size: 0.82rem; color: var(--muted); font-weight: 400; }
+    .dl .chip {
+      flex-shrink: 0; font-size: 0.78rem; padding: 0.35rem 0.65rem; border-radius: 999px;
+      background: rgba(23, 126, 91, 0.22); color: var(--wood-light);
     }
 
     .note {
-      margin-top: 2.5rem;
-      padding: 1.15rem 1.25rem;
-      border-left: 3px solid var(--accent);
-      background: rgba(0, 0, 0, 0.28);
-      border-radius: 0 10px 10px 0;
-      max-width: 40rem;
+      margin-top: 1.8rem; padding: 1.1rem 1.2rem; border-left: 3px solid var(--accent);
+      background: rgba(0,0,0,0.28); border-radius: 0 10px 10px 0; max-width: 42rem;
     }
-    .note h2 {
-      margin: 0 0 0.55rem;
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: var(--wood-light);
-    }
-    .note p, .note li {
-      margin: 0;
-      color: var(--muted);
-      font-size: 0.88rem;
-      line-height: 1.65;
-    }
-    .note ol { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    .note h2 { margin: 0 0 0.5rem; font-size: 0.95rem; color: var(--wood-light); }
+    .note p, .note li { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.65; }
+    .note ol { margin: 0.35rem 0 0; padding-left: 1.2rem; }
     .note code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.84em;
-      color: var(--wood-light);
-      background: rgba(255,255,255,0.06);
-      padding: 0.1em 0.35em;
-      border-radius: 4px;
+      font-size: 0.84em; color: var(--wood-light); background: rgba(255,255,255,0.06);
+      padding: 0.1em 0.35em; border-radius: 4px;
     }
-    .note a { color: var(--accent); }
 
     .foot {
-      margin-top: 3rem;
-      padding-top: 1.25rem;
-      border-top: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 0.82rem;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem 1.5rem;
+      padding: 2rem 0 3rem; border-top: 1px solid var(--line); color: var(--muted);
+      font-size: 0.82rem; display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem;
     }
     .foot a { color: var(--wood-light); }
 
     @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
       .btn { transition: none; }
       .btn:hover { transform: none; }
     }
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <p class="brand" id="brand">木牛流马</p>
+  <header class="wrap hero">
+    <p class="brand">木牛流马</p>
     <p class="tagline">智能体办公台</p>
     <p class="slogan">驮过十万大军的粮，现在给你打工。</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#download">下载桌面客户端</a>
+      <a class="btn btn-ghost" href="#shots">看看真实界面</a>
+    </div>
+    <p class="meta">当前版本 <strong id="ver">0.1.0</strong> · 企业知识库登录 · 桌面一体包（内嵌服务端）</p>
+  </header>
 
-    <div class="meta">
-      <span>当前版本 <strong id="ver">0.1.0</strong></span>
-      <span>企业知识库登录 · 桌面一体包</span>
+  <section class="wrap" id="intro">
+    <h2 class="sec-title">一句话：把活交给木牛</h2>
+    <p class="sec-lead">用自然语言下达任务，Agent 自主拆解、调用工具执行，交付可验收的成果物。对接企业知识库身份；专家、技能与模型供应商按人隔离。</p>
+    <div class="features">
+      <article class="feature">
+        <h3>任务落地</h3>
+        <p>下达、围观、追问、验收一条链路。工作区隔离读写，成果物可下载。</p>
+      </article>
+      <article class="feature">
+        <h3>专家与技能</h3>
+        <p>按场景配置专家与技能；派发只用你自己启用的模型供应商，不共享密钥。</p>
+      </article>
+      <article class="feature">
+        <h3>知识库一体</h3>
+        <p>登录即企业知识库用户；侧栏可进既有知识空间、文档与问答工作台。</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="wrap" id="shots">
+    <h2 class="sec-title">真实界面</h2>
+    <p class="sec-lead">截取自当前产品同一套界面（非示意稿）：登录、首页下达任务、任务列表。</p>
+    <div class="shots">
+      <figure class="shot">
+        <img src="assets/shot-login.jpg" alt="木牛流马登录界面" width="1440" height="900" loading="eager" />
+        <figcaption>
+          <strong>登录</strong>
+          企业知识库账号进入；左侧品牌与木牛形象，右侧登录表单。
+        </figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/shot-home.jpg" alt="木牛流马首页" width="1440" height="900" loading="lazy" />
+        <figcaption>
+          <strong>首页</strong>
+          下达任务、选择专家与模型、查看近期任务。
+        </figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/shot-task.jpg" alt="木牛流马任务列表" width="1440" height="900" loading="lazy" />
+        <figcaption>
+          <strong>任务</strong>
+          查看任务状态与进入详情围观执行、验收成果物。
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="wrap" id="download">
+    <h2 class="sec-title">下载桌面客户端</h2>
+    <p class="sec-lead">推荐使用桌面一体包（内嵌服务端，不占用你服务器上的 8787 端口）。浏览器版需在内网自行部署服务，请勿与本机其他占用 8787 的服务混用。</p>
+
+    <div class="downloads" aria-label="下载安装包">
+      <a class="dl" data-platform="win-x64" href="releases/0.1.0/Muni-0.1.0-win-x64-Setup.exe">
+        <span><span class="label">Windows</span><span class="sub">安装包 · x64</span></span>
+        <span class="chip">下载</span>
+      </a>
+      <a class="dl" data-platform="mac-arm64" href="releases/0.1.0/Muni-0.1.0-mac-arm64.dmg">
+        <span><span class="label">macOS · Apple Silicon</span><span class="sub">M1 / M2 / M3 / M4 · DMG</span></span>
+        <span class="chip">下载</span>
+      </a>
+      <a class="dl" data-platform="mac-x64" href="releases/0.1.0/Muni-0.1.0-mac-x64.dmg">
+        <span><span class="label">macOS · Intel</span><span class="sub">Intel 芯片 · DMG</span></span>
+        <span class="chip">下载</span>
+      </a>
     </div>
 
-    <section class="downloads" aria-label="下载安装包" id="downloads">
-      <!-- 由 latest.json 填充；无 JS 时仍有静态兜底 -->
-      <a class="btn" data-platform="win-x64" href="releases/0.1.0/%E6%9C%A8%E7%89%9B%E6%B5%81%E9%A9%AC-0.1.0-win-x64-Setup.exe">
-        <span>
-          <span class="label">Windows</span>
-          <span class="sub">安装包 · x64</span>
-        </span>
-        <span class="chip">下载</span>
-      </a>
-      <a class="btn" data-platform="mac-arm64" href="releases/0.1.0/%E6%9C%A8%E7%89%9B%E6%B5%81%E9%A9%AC-0.1.0-mac-arm64.dmg">
-        <span>
-          <span class="label">macOS · Apple Silicon</span>
-          <span class="sub">M1 / M2 / M3 / M4 · DMG</span>
-        </span>
-        <span class="chip">下载</span>
-      </a>
-      <a class="btn" data-platform="mac-x64" href="releases/0.1.0/%E6%9C%A8%E7%89%9B%E6%B5%81%E9%A9%AC-0.1.0-mac-x64.dmg">
-        <span>
-          <span class="label">macOS · Intel</span>
-          <span class="sub">Intel 芯片 · DMG</span>
-        </span>
-        <span class="chip">下载</span>
-      </a>
-    </section>
-
-    <aside class="note" id="mac-note">
-      <h2>Mac 提示：若提示「已损坏，无法打开」</h2>
-      <p>当前发行包为<strong>未使用 Apple 开发者证书签名</strong>。从浏览器下载后，若系统拦截，在「终端」执行（把路径换成你的安装位置）：</p>
+    <aside class="note">
+      <h2>Mac：若提示「已损坏，无法打开」</h2>
+      <p>未使用 Apple 开发者证书。终端执行：</p>
       <ol>
         <li><code>xattr -cr /Applications/木牛流马.app</code></li>
-        <li>再双击打开；仍不行可右键图标 →「打开」</li>
+        <li>再双击；不行则右键 →「打开」</li>
       </ol>
-      <p style="margin-top:0.65rem">请勿用微信等聊天工具转发安装包（会加重隔离属性）。请从本页直接下载。</p>
+      <p style="margin-top:0.55rem">请从本页下载，勿用微信转发。</p>
     </aside>
+  </section>
 
-    <footer class="foot">
-      <span>备用归档</span>
-      <a id="gh-release" href="https://github.com/cq971020745/agent-office/releases/tag/v0.1.0" target="_blank" rel="noopener">GitHub Release v0.1.0</a>
-    </footer>
-  </main>
+  <footer class="wrap foot">
+    <span>木牛流马 · 智能体办公台</span>
+    <a id="gh-release" href="https://github.com/cq971020745/agent-office/releases/tag/v0.1.0" target="_blank" rel="noopener">GitHub Release</a>
+  </footer>
 
   <script>
     fetch("./latest.json", { cache: "no-store" })
@@ -222,15 +238,11 @@
       .then((data) => {
         if (!data || !data.version) return;
         document.getElementById("ver").textContent = data.version;
-        const gh = document.getElementById("gh-release");
-        if (data.githubRelease) {
-          gh.href = data.githubRelease;
-          gh.textContent = "GitHub Release v" + data.version;
-        }
+        if (data.githubRelease) document.getElementById("gh-release").href = data.githubRelease;
         const base = "releases/" + data.version + "/";
         for (const [key, file] of Object.entries(data.files || {})) {
           const a = document.querySelector('[data-platform="' + key + '"]');
-          if (a && file) a.href = base + encodeURIComponent(file);
+          if (a && file) a.href = base + file;
         }
       })
       .catch(() => {});

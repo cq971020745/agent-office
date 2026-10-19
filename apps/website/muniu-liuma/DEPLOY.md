@@ -1,44 +1,26 @@
 # 木牛流马官网部署
 
-## 上传（Xftp）
+## 地址
 
-本机已打好与服务器同构的目录：
+- 官网：`http://139.196.147.134/AI/muniu-liuma/`
 
-`D:\Projects\agent-group\muniu-liuma-site\`
+（nginx `root` 为 `/var/chenqiang`，官网路径带 `/AI/`。安装包用 ASCII 文件名。）
 
-用 Xftp 整夹上传到服务器：
+注意：本服务器 `8787` 已被 API Hub 占用；木牛流马桌面一体包内嵌服务端，不抢该端口。浏览器自建请另开端口。
 
-`/var/chenqiang/AI/muniu-liuma/`
-
-上传后结构应为：
+## 目录结构
 
 ```
 /var/chenqiang/AI/muniu-liuma/
   index.html
   latest.json
+  assets/shot-*.jpg
   releases/0.1.0/
-    木牛流马-0.1.0-win-x64-Setup.exe
-    木牛流马-0.1.0-mac-arm64.dmg
-    木牛流马-0.1.0-mac-x64.dmg
+    Muni-0.1.0-win-x64-Setup.exe
+    Muni-0.1.0-mac-arm64.dmg
+    Muni-0.1.0-mac-x64.dmg
 ```
 
-访问：`http://139.196.147.134/muniu-liuma/`
-
-## 若打开 404
-
-确认现有站点文档根是否已指向 `/var/chenqiang/AI`。若不是，在 nginx 对应 server 中增加：
-
-```nginx
-location /muniu-liuma/ {
-  alias /var/chenqiang/AI/muniu-liuma/;
-  index index.html;
-  # 大安装包直链
-  sendfile on;
-  aio threads;
-}
-```
-
-改完后：`nginx -t && nginx -s reload`
 
 ## Mac「已损坏」
 

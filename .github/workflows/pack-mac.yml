@@ -1,6 +1,6 @@
 # 在 macOS Runner 上打木牛流马 Mac 安装包（Windows 本机无法可靠交叉编译）
 # 触发：Actions → Pack macOS → Run workflow
-# 注意：未配置 Apple 签名/公证，产物为未签名 dmg；对方首次打开需右键「打开」或在「隐私与安全性」里允许。
+# 未配置 Apple 开发者证书时使用 ad-hoc 签名；用户仍可能需 xattr -cr 去掉隔离属性。
 name: Pack macOS
 
 on:
@@ -14,6 +14,10 @@ on:
           - x64
           - universal
         default: arm64
+      release_tag:
+        description: "可选：发布到该 GitHub Release tag（如 v0.1.0）；留空只上传 Artifact"
+        required: false
+        default: ""
 
 concurrency:
   group: pack-mac-${{ github.ref }}
@@ -23,6 +27,8 @@ jobs:
   pack:
     runs-on: macos-14
     timeout-minutes: 120
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,7 +61,6 @@ jobs:
 
       - name: Stage server + build + pack
         env:
-          # 无 Apple 证书时跳过签名探测，打未签名包
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           set -euo pipefail
@@ -63,15 +68,16 @@ jobs:
           node scripts/stage-server.mjs
           pnpm --filter @office/desktop build
           cd apps/desktop
+          # identity=- ：ad-hoc 签名（勿用 null，否则易报「已损坏」）
           case "$ARCH" in
             arm64)
-              pnpm exec electron-builder --mac --arm64 -c.mac.identity=null
+              pnpm exec electron-builder --mac --arm64 -c.mac.identity=-
               ;;
             x64)
-              pnpm exec electron-builder --mac --x64 -c.mac.identity=null
+              pnpm exec electron-builder --mac --x64 -c.mac.identity=-
               ;;
             universal)
-              pnpm exec electron-builder --mac --x64 --arm64 -c.mac.identity=null
+              pnpm exec electron-builder --mac --x64 --arm64 -c.mac.identity=-
               ;;
           esac
           echo "=== release ==="
@@ -86,3 +92,23 @@ jobs:
             apps/desktop/release/*.zip
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish to GitHub Release
+        if: ${{ inputs.release_tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: 木牛流马 ${{ inputs.release_tag }}
+          draft: false
+          prerelease: false
+          files: |
+            apps/desktop/release/*.dmg
+          body: |
+            木牛流马桌面客户端（Mac）。
+
+            - 官网下载（推荐）：http://139.196.147.134/muniu-liuma/
+            - 未使用 Apple 开发者证书签名。若提示「已损坏」，在终端执行：
+              `xattr -cr /Applications/木牛流马.app`
+            - 请勿用微信转发安装包。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

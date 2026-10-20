@@ -1,0 +1,48 @@
+# 木牛流马官网 → GitHub Pages（https://<owner>.github.io/<repo>/）
+# Pages 放不下大安装包（单文件上限 100MB），部署时把 latest.json 注入 downloadBase，
+# 让下载按钮指向同名 GitHub Release 资产；阿里云官网（/AI/muniu-liuma/）不注入，
+# 继续走同目录 releases/，国内下载速度不受影响。
+name: Deploy Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/website/muniu-liuma/**"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Point downloads at GitHub Release assets
+        working-directory: apps/website/muniu-liuma
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('latest.json','utf8'));j.downloadBase='https://github.com/'+process.env.REPO+'/releases/download/v'+j.version+'/';fs.writeFileSync('latest.json',JSON.stringify(j,null,2)+'\n')"
+          cat latest.json
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/website/muniu-liuma
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

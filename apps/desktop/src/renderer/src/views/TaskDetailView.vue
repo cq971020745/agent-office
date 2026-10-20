@@ -375,7 +375,7 @@ const previewAvailable = computed(
   () => previewFile.value !== null || deliverables.value.length > 0 || previewUserOpened.value
 );
 const showPreview = computed(() => previewAvailable.value && !previewCollapsed.value);
-/** 浏览器起始地址：空则显示空白页，由用户输入要预览的 URL（勿默认 5173，那是桌面端自身 Vite） */
+/** 浏览器起始地址：空则显示空白页，由用户输入要预览的 URL（勿默认 38618，那是桌面端自身 Vite） */
 const browserStartUrl = ref("");
 const workspaceFolderName = computed(() => {
   const raw = (task.value?.workspacePath ?? "").replace(/[\\/]+$/, "");

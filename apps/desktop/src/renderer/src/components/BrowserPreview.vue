@@ -74,7 +74,7 @@ function titleFromUrl(url: string): string {
   }
 }
 
-/** 空白起始；勿默认 5173（开发时那是 Electron 渲染进程自己的 Vite，嵌进 webview 会一直转圈） */
+/** 空白起始；勿默认 38618（开发时那是 Electron 渲染进程自己的 Vite，嵌进 webview 会一直转圈） */
 const BLANK = "about:blank";
 const startUrl = normalizeUrl(props.initialUrl) || BLANK;
 const tabs = ref<BrowserTab[]>([
@@ -516,7 +516,7 @@ onBeforeUnmount(() => {
         <div v-if="showStartPage" class="start-page">
           <h3>打开网页预览</h3>
           <p>在上方地址栏输入本地或内网前端地址后回车。</p>
-          <p class="muted">开发时请勿填本客户端的 5173 端口（那是桌面窗口自己的页面）。</p>
+          <p class="muted">开发时请勿填本客户端的 38618 端口（那是桌面窗口自己的页面）。</p>
           <div class="quick">
             <button type="button" @click="openQuick('http://127.0.0.1:3000/')">localhost:3000</button>
             <button type="button" @click="openQuick('http://127.0.0.1:8080/')">localhost:8080</button>

@@ -51,7 +51,7 @@ describe("CORS 预检（桌面端跨端口访问）", () => {
       method: "OPTIONS",
       url: "/tasks/some-id",
       headers: {
-        origin: "http://localhost:5173",
+        origin: "http://localhost:38618",
         "access-control-request-method": "DELETE",
       },
     });

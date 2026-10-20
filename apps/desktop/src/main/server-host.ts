@@ -6,7 +6,7 @@ import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 
-const DEFAULT_PORT = 8787;
+const DEFAULT_PORT = 38617;
 const READY_TIMEOUT_MS = 180_000;
 const READY_POLL_MS = 500;
 

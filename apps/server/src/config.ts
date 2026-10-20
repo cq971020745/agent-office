@@ -2,7 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 
 export const config = {
-  port: Number(process.env.PORT ?? 8787),
+  port: Number(process.env.PORT ?? 38617),
   dataDir: path.resolve(process.env.DATA_DIR ?? "data"),
   jwtSecret: process.env.JWT_SECRET ?? "dev-secret-do-not-use-in-production",
 };

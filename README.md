@@ -23,11 +23,11 @@ docs/        design.md + adr/
 
 ```bash
 pnpm install
-pnpm dev:server     # http://127.0.0.1:8787
+pnpm dev:server     # http://127.0.0.1:38617
 pnpm dev:desktop    # Electron 控制台
 ```
 
-界面有两个入口，二选一即可：Electron 桌面客户端（`pnpm dev:desktop`），或直接用浏览器打开 `http://127.0.0.1:8787/`（服务端会托管 Web 控制台，需先 `pnpm --filter @office/desktop build` 生成渲染层产物）。
+界面有两个入口，二选一即可：Electron 桌面客户端（`pnpm dev:desktop`），或直接用浏览器打开 `http://127.0.0.1:38617/`（服务端会托管 Web 控制台，需先 `pnpm --filter @office/desktop build` 生成渲染层产物）。
 
 服务端环境变量：`PORT`、`DATA_DIR`、`JWT_SECRET`（见 `apps/server/src/config.ts`），以及 `KB_BASE_URL`（见 `apps/server/src/kb-auth.ts`，默认 `http://10.50.11.17/new-general-rag-kb`）。生产部署务必设置强随机 `JWT_SECRET`（未设置时服务端会打告警）。
 
@@ -107,7 +107,7 @@ docker compose up -d --build   # 单容器 + ./data 数据卷
 
 ### 客户端一体包（给别人安装用）
 
-一体包 = Electron 桌面端 + 内嵌服务端 + 捆绑的 Node 运行时。用户双击安装/解压后即可用，数据写在本机应用用户目录，接口仍是本机 `127.0.0.1:8787`。
+一体包 = Electron 桌面端 + 内嵌服务端 + 捆绑的 Node 运行时。用户双击安装/解压后即可用，数据写在本机应用用户目录，接口仍是本机 `127.0.0.1:38617`（冷门端口，避免与其他项目冲突；可用环境变量 `PORT` 覆盖）。
 
 要求：在**目标操作系统**上打包（会把该系统的 `node` 可执行文件打进包内，并用 npm 装好服务端依赖）。本仓库 Windows 机打 Windows 包；macOS / Linux 在对应机器或 CI 跑同一脚本。
 
@@ -138,8 +138,8 @@ pnpm pack:desktop
 - 应用：`@office/server`（Fastify + pi agent）、`@office/desktop`（Electron + Vue 3）、`@office/shared`（共享 DTO）
 
 ### 运行脚本
-- `dev:server`：启动 API，默认 http://127.0.0.1:8787
-- `dev:desktop`：启动 Electron 开发窗口（渲染层 http://localhost:5173/，接口仍走 8787）
+- `dev:server`：启动 API，默认 http://127.0.0.1:38617
+- `dev:desktop`：启动 Electron 开发窗口（渲染层 http://localhost:38618/，接口仍走 38617）
 - `build`：递归构建各包；浏览器入口依赖 `@office/desktop` 的渲染产物
 - `typecheck`：递归类型检查
 - `test`：服务端 `node:test`

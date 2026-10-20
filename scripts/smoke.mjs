@@ -1,12 +1,12 @@
 // 端到端冒烟测试：对一个已启动的服务端跑通「注册 → 配供应商 → 建专家 → 派发任务 →
 // 围观完成 → 成果物/消息校验 → 删除任务 → 清理校验」，最后验证登录限流。
 // 用法：先启动 scripts/mock-openai.mjs 与服务端（全新 DATA_DIR），再 node scripts/smoke.mjs
-// 环境变量：SMOKE_BASE（默认 http://127.0.0.1:8787）
+// 环境变量：SMOKE_BASE（默认 http://127.0.0.1:38617）
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-const BASE = process.env.SMOKE_BASE ?? "http://127.0.0.1:8787";
+const BASE = process.env.SMOKE_BASE ?? "http://127.0.0.1:38617";
 const DATA_DIR = process.env.SMOKE_DATA_DIR ?? "";
 
 async function api(method, pathName, { token, body } = {}) {

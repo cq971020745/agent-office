@@ -40,7 +40,7 @@ import type {
 } from "@office/shared";
 import { toast } from "./composables/toast";
 
-export const API_BASE = "http://127.0.0.1:8787";
+export const API_BASE = "http://127.0.0.1:38617";
 
 const TOKEN_KEY = "agent-office-token";
 const USERNAME_KEY = "agent-office-username";

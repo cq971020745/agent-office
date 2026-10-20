@@ -950,7 +950,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       const row = getTaskRow(id);
       if (!row || !canAccess(req, row)) return reply.code(404).send({ error: "task not found" });
       reply.hijack();
-      // hijack 之后 Fastify 不再刷写响应头：EventSource 跨域时（桌面 dev 渲染层 5173 → 服务端 8787）
+      // hijack 之后 Fastify 不再刷写响应头：EventSource 跨域时（桌面 dev 渲染层 38618 → 服务端 38617）
       // 浏览器会因缺少 CORS 头直接关闭事件流，实时面板收不到任何事件，须手动回写
       const origin = req.headers.origin;
       if (origin) {

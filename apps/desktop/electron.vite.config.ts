@@ -5,6 +5,8 @@ export default defineConfig({
   main: { plugins: [externalizeDepsPlugin()] },
   preload: { plugins: [externalizeDepsPlugin()] },
   renderer: {
+    // dev 端口避开 Vite 默认的 5173，防止和其他前端项目抢端口
+    server: { port: 38618 },
     plugins: [
       vue({
         template: {

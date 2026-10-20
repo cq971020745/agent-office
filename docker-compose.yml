@@ -2,7 +2,7 @@ services:
   app:
     build: ./apps/server
     ports:
-      - "8787:8787"
+      - "38617:38617"
     environment:
       - DATA_DIR=/app/data
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}

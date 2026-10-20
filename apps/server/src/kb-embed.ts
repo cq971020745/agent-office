@@ -80,7 +80,7 @@ export async function registerKbEmbedRoutes(app: FastifyInstance): Promise<void>
       "set-cookie",
       `kb_sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_MS / 1000)}`
     );
-    // 开发时页面在 localhost:5173，窗口在 127.0.0.1:8787，跨站窗口存不住 Cookie。
+    // 开发时页面在 localhost:38618，窗口在 127.0.0.1:38617，跨站窗口存不住 Cookie。
     // 把会话编号放进首个页面地址，由代理写入知识库自己的登录态。
     return reply.redirect(`/new-general-rag-kb/knowledge?kb_sid=${sid}`);
   });

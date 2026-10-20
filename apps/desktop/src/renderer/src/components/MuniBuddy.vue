@@ -319,7 +319,7 @@ const title = computed(() => {
         <!-- 颈楔：补齐头颈与躯干的过渡 -->
         <path d="M52 46 L76 58 L74 70 L50 62 Z" fill="url(#m-plank)" stroke="#4e2c12" stroke-width="1" />
         <!-- 远角（粗壮上弯，带棱线） -->
-        <path d="M44 27 C41 19 39 11 40 4 C40.5 0.5 46.5 0.5 47 4 C48 11 50 18 54 25 Z" fill="#8fa3b8" stroke="#4a5a6a" stroke-width="1" />
+        <path d="M44 27 C42 20 41 14 42 8 C42.5 4.5 48 4.5 48.5 8 C49.5 14 51 20 54 25 Z" fill="#8fa3b8" stroke="#4a5a6a" stroke-width="1" />
         <path d="M42.5 15 C43.5 12 44 9 44.2 6 M46.5 15 C47.5 12 48 9 48.2 6" fill="none" stroke="#4a5a6a" stroke-opacity="0.5" stroke-width="0.9" />
         <!-- 耳朵 -->
         <ellipse cx="58" cy="32" rx="4" ry="6" transform="rotate(38 58 32)" fill="url(#m-wood)" stroke="#5c3416" stroke-width="0.9" />
@@ -332,9 +332,9 @@ const title = computed(() => {
         <circle cx="19.5" cy="51" r="1.6" fill="#8a5a26" />
         <path class="mouth-line" d="M17 56.5 h9" stroke="#5c3416" stroke-width="1.1" stroke-linecap="round" />
         <!-- 近角（粗壮上弯，带棱线与光尖） -->
-        <path d="M27 28 C21 21 18 13 19 5 C19.5 1 25.5 1 26 5 C27 12 30 19 35 26 Z" fill="url(#m-horn)" stroke="#4a5a6a" stroke-width="1" />
+        <path d="M27 28 C22 23 20 17 21 11 C21.5 7.5 27 7.5 27.5 11 C28.5 17 31 22 36 27 Z" fill="url(#m-horn)" stroke="#4a5a6a" stroke-width="1" />
         <path d="M23.5 16 C23 13 23 10 23.5 7 M28 16 C27.5 13 27 10 27 7" fill="none" stroke="#4a5a6a" stroke-opacity="0.45" stroke-width="0.9" />
-        <circle class="glow-fill" cx="22.5" cy="4.5" r="1.2" filter="url(#m-glow)" />
+        <circle class="glow-fill" cx="22" cy="9.5" r="1.1" filter="url(#m-glow)" />
         <!-- 护额「牛」纹 -->
         <path d="M33 24 h15 l2.8 5.5 -2.8 5.5 h-15 l-2.8 -5.5 z" fill="url(#m-cloth)" stroke="#1e3a5f" stroke-width="0.9" />
         <text class="emblem" x="41" y="34" text-anchor="middle" font-size="8">牛</text>

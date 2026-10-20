@@ -39,7 +39,7 @@
       <ellipse cx="280" cy="150" rx="230" ry="110" fill="rgba(var(--accent-rgb),0.10)" />
       <ellipse cx="285" cy="300" rx="215" ry="17" fill="rgba(0,0,0,0.25)" />
 
-      <g class="ox-cart" transform="translate(60,16) scale(2)">
+      <g transform="translate(60,16) scale(2)"><g class="ox-cart">
 
 
       <!-- 地面光圈与投影 -->
@@ -171,7 +171,7 @@
         <!-- 颈楔：补齐头颈与躯干的过渡 -->
         <path d="M52 46 L76 58 L74 70 L50 62 Z" fill="url(#lh2-m-plank)" stroke="#4e2c12" stroke-width="1" />
         <!-- 远角（粗壮上弯，带棱线） -->
-        <path d="M44 27 C41 19 39 11 40 4 C40.5 0.5 46.5 0.5 47 4 C48 11 50 18 54 25 Z" fill="#8fa3b8" stroke="#4a5a6a" stroke-width="1" />
+        <path d="M44 27 C42 20 41 14 42 8 C42.5 4.5 48 4.5 48.5 8 C49.5 14 51 20 54 25 Z" fill="#8fa3b8" stroke="#4a5a6a" stroke-width="1" />
         <path d="M42.5 15 C43.5 12 44 9 44.2 6 M46.5 15 C47.5 12 48 9 48.2 6" fill="none" stroke="#4a5a6a" stroke-opacity="0.5" stroke-width="0.9" />
         <!-- 耳朵 -->
         <ellipse cx="58" cy="32" rx="4" ry="6" transform="rotate(38 58 32)" fill="url(#lh2-m-wood)" stroke="#5c3416" stroke-width="0.9" />
@@ -184,9 +184,9 @@
         <circle cx="19.5" cy="51" r="1.6" fill="#8a5a26" />
         <path class="mouth-line" d="M17 56.5 h9" stroke="#5c3416" stroke-width="1.1" stroke-linecap="round" />
         <!-- 近角（粗壮上弯，带棱线与光尖） -->
-        <path d="M27 28 C21 21 18 13 19 5 C19.5 1 25.5 1 26 5 C27 12 30 19 35 26 Z" fill="url(#lh2-m-horn)" stroke="#4a5a6a" stroke-width="1" />
+        <path d="M27 28 C22 23 20 17 21 11 C21.5 7.5 27 7.5 27.5 11 C28.5 17 31 22 36 27 Z" fill="url(#lh2-m-horn)" stroke="#4a5a6a" stroke-width="1" />
         <path d="M23.5 16 C23 13 23 10 23.5 7 M28 16 C27.5 13 27 10 27 7" fill="none" stroke="#4a5a6a" stroke-opacity="0.45" stroke-width="0.9" />
-        <circle class="glow-fill" cx="22.5" cy="4.5" r="1.2" filter="url(#lh2-m-glow)" />
+        <circle class="glow-fill" cx="22" cy="9.5" r="1.1" filter="url(#lh2-m-glow)" />
         <!-- 护额「牛」纹 -->
         <path d="M33 24 h15 l2.8 5.5 -2.8 5.5 h-15 l-2.8 -5.5 z" fill="url(#lh2-m-cloth)" stroke="#1e3a5f" stroke-width="0.9" />
         <text class="emblem" x="41" y="34" text-anchor="middle" font-size="8">牛</text>
@@ -202,7 +202,7 @@
       </g>
 
       <!-- 状态粒子（无文字） -->
-      </g>
+      </g></g>
 
       <g class="chip a">
         <rect x="36" y="70" width="92" height="58" rx="12" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.22)" />
@@ -244,8 +244,6 @@
 .ox-cart {
   --mood: rgb(var(--accent-rgb));
   --mood-soft: rgba(var(--accent-rgb), 0.35);
-  transform-box: view-box;
-  transform-origin: 285px 300px;
   animation: haul 4.8s ease-in-out infinite;
 }
 .glow-fill,
@@ -291,6 +289,9 @@
   fill: #ffffff;
   opacity: 0.95;
 }
+.lid {
+  opacity: 0;
+}
 .chip {
   animation: bob 6s ease-in-out infinite;
 }
@@ -325,10 +326,10 @@
 @keyframes haul {
   0%,
   100% {
-    transform: translate(60px, 16px) scale(2);
+    transform: translateY(0);
   }
   50% {
-    transform: translate(60px, 12px) scale(2);
+    transform: translateY(-3px);
   }
 }
 @keyframes step {

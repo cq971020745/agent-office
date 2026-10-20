@@ -235,7 +235,8 @@
         if (!data || !data.version) return;
         document.getElementById("ver").textContent = data.version;
         if (data.githubRelease) document.getElementById("gh-release").href = data.githubRelease;
-        const base = "releases/" + data.version + "/";
+        // downloadBase：GitHub Pages 等不放安装包的部署用它指向 Release 资产；官网服务器不设，走同目录 releases/
+        const base = data.downloadBase || ("releases/" + data.version + "/");
         for (const [key, file] of Object.entries(data.files || {})) {
           const a = document.querySelector('[data-platform="' + key + '"]');
           if (a && file) a.href = base + file;

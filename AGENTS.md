@@ -48,3 +48,7 @@
 - 澄台对外发客户端：任务用的 Pi 包必须进平台 `{DATA_DIR}/agent`（见 `apps/server/src/packages.ts`），随服务启动安装。不要依赖操作者本机 `~/.pi`。
 - 仅终端 TUI 的扩展（statusbar / sidebar / pi-git-ui 等）不要当产品依赖；可见能力做进桌面（会话上下文占用、任务顶栏 Git 面板等）。
 - 取舍见 [docs/adr/0008-product-shipped-pi-packages.md](docs/adr/0008-product-shipped-pi-packages.md)。
+
+## 端口
+
+- 服务端默认 `38617`、桌面 dev 渲染层 `38618`，是刻意选的冷门端口（服务端仍可用 `PORT` 覆盖），不要改回主流默认值。改端口时四处同步：`apps/server/src/config.ts`、`apps/desktop/src/main/server-host.ts`、`apps/desktop/src/renderer/src/api.ts`、`apps/desktop/src/renderer/index.html` 的 CSP。取舍见 [docs/adr/0010-cold-default-ports.md](docs/adr/0010-cold-default-ports.md)。

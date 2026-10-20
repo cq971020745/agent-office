@@ -83,12 +83,12 @@ const u = (name: string) => `url(#${uid.value}-${name})`;
     <!-- 远侧液压腿 -->
     <g class="legs far">
       <g class="leg lf1">
-        <path d="M86 86 h11 a4 4 0 0 1 4 4 v34 h-19 v-34 a4 4 0 0 1 4 -4 z" fill="#2c3a4a" stroke="#141b23" stroke-width="1" />
-        <rect x="83" y="124" width="21" height="8" rx="3" fill="#10161c" />
+        <path d="M86 86 h11 a4 4 0 0 1 4 4 v34 h-19 v-34 a4 4 0 0 1 4 -4 z" fill="#2c3a4a" stroke="#4a5c70" stroke-width="0.9" />
+        <rect x="83" y="124" width="21" height="8" rx="3" fill="#10161c" stroke="#4a5c70" stroke-width="0.8" />
       </g>
       <g class="leg lf2">
-        <path d="M108 86 h11 a4 4 0 0 1 4 4 v34 h-19 v-34 a4 4 0 0 1 4 -4 z" fill="#242f3c" stroke="#141b23" stroke-width="1" />
-        <rect x="105" y="124" width="21" height="8" rx="3" fill="#10161c" />
+        <path d="M108 86 h11 a4 4 0 0 1 4 4 v34 h-19 v-34 a4 4 0 0 1 4 -4 z" fill="#242f3c" stroke="#4a5c70" stroke-width="0.8" />
+        <rect x="105" y="124" width="21" height="8" rx="3" fill="#10161c" stroke="#4a5c70" stroke-width="0.8" />
       </g>
     </g>
 
@@ -166,19 +166,19 @@ const u = (name: string) => `url(#${uid.value}-${name})`;
     <g class="legs near">
       <g class="leg l1">
         <path d="M72 84 L68 104 L90 106 L94 86 Z" :fill="u('armor')" stroke="#1c2733" stroke-width="1.1" />
-        <path d="M69 104 L66 128 L90 130 L92 106 Z" :fill="u('plank')" stroke="#1c2733" stroke-width="1" />
+        <path d="M69 104 L66 128 L90 130 L92 106 Z" fill="url(#m-armor)" stroke="#10161c" stroke-width="1.2" />
         <rect x="90" y="103" width="4.5" height="24" rx="2" :fill="u('dark')" />
         <rect x="91.2" y="105" width="2.2" height="20" rx="1.1" class="energy-fill" opacity="0.85" />
         <circle class="glow-dot" cx="80" cy="114" r="1.8" :filter="u('glow')" />
-        <rect x="64" y="128" width="28" height="9" rx="3" fill="#10161c" stroke="#0d1319" stroke-width="0.8" />
+        <rect x="64" y="128" width="28" height="9" rx="3" fill="#10161c" stroke="#8496aa" stroke-width="1" />
       </g>
       <g class="leg l2">
         <path d="M96 86 L92 106 L114 108 L118 88 Z" :fill="u('armor')" stroke="#1c2733" stroke-width="1.1" />
-        <path d="M93 108 L90 130 L114 132 L116 108 Z" :fill="u('plank')" stroke="#1c2733" stroke-width="1" />
+        <path d="M93 108 L90 130 L114 132 L116 108 Z" fill="url(#m-armor)" stroke="#10161c" stroke-width="1.2" />
         <rect x="114" y="105" width="4.5" height="24" rx="2" :fill="u('dark')" />
         <rect x="115.2" y="107" width="2.2" height="20" rx="1.1" class="energy-fill" opacity="0.85" />
         <circle class="glow-dot" cx="104" cy="116" r="1.8" :filter="u('glow')" />
-        <rect x="88" y="130" width="28" height="9" rx="3" fill="#10161c" stroke="#0d1319" stroke-width="0.8" />
+        <rect x="88" y="130" width="28" height="9" rx="3" fill="#10161c" stroke="#8496aa" stroke-width="1" />
       </g>
     </g>
 

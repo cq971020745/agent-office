@@ -71,8 +71,8 @@ import MuniCartArt from "./MuniCartArt.vue";
   animation: chip-bob 6s ease-in-out infinite;
 }
 .chip.a {
-  left: 1%;
-  top: 20%;
+  right: 0.5%;
+  top: 24%;
 }
 .chip.c {
   right: 1.5%;

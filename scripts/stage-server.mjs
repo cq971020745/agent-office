@@ -289,6 +289,62 @@ const tgzMb = (fs.statSync(tgz).size / (1024 * 1024)).toFixed(1);
 console.log(`[stage] deps.tgz ${tgzMb}MB`);
 rmrf(deps);
 
+// ---- 内置 Python 运行时（wps365-env 闸门与 wps365-skill 脚本的执行环境）----
+// 用户机器上没有 Python，也没有 requests/pycryptodome。随包内置一份可重定位的
+// python-build-standalone，并在打包时预装好依赖；已就绪（marker 存在）则跳过。
+const PBS_RELEASE = "20240107";
+const PBS_PYTHON = "cpython-3.11.7";
+
+function pbsTarget() {
+  if (process.platform === "win32") return "x86_64-pc-windows-msvc-shared";
+  if (process.platform === "darwin") return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
+}
+
+function stagePython() {
+  const pyDir = path.join(stageRoot, "python");
+  const okMarker = path.join(pyDir, ".wps-staged-ok");
+  if (fs.existsSync(okMarker)) {
+    console.log("[stage] python runtime already staged, skip");
+    return;
+  }
+  rmrf(pyDir);
+  fs.mkdirSync(pyDir, { recursive: true });
+  const url =
+    `https://github.com/indygreg/python-build-standalone/releases/download/${PBS_RELEASE}/` +
+    `${PBS_PYTHON}%2B${PBS_RELEASE}-${pbsTarget()}-install_only.tar.gz`;
+  // 缓存在 dist/cache（[stage] clean 只清 stageRoot），重复打包不重复下载
+  const pyCache = path.join(root, "dist", "cache");
+  fs.mkdirSync(pyCache, { recursive: true });
+  const tgz = path.join(pyCache, `python-runtime-${pbsTarget()}.tar.gz`);
+  if (!fs.existsSync(tgz)) {
+    console.log(`[stage] download python runtime: ${url}`);
+    execSync(`curl -sSL --fail --retry 3 -o python-runtime.tar.gz "${url}"`, { cwd: pyCache, stdio: "inherit" });
+    fs.renameSync(path.join(pyCache, "python-runtime.tar.gz"), tgz);
+  }
+  // 归档内是顶层 python/ 目录；解到临时目录再挪到位（归档路径无盘符，相对 cwd 解压跨 shell 稳定）
+  const tmp = path.join(pyCache, "python-unpack");
+  rmrf(tmp);
+  fs.mkdirSync(tmp, { recursive: true });
+  execSync(`tar -xzf "${path.basename(tgz)}" -C python-unpack`, { cwd: pyCache, stdio: "inherit" });
+  fs.rmSync(path.join(tmp, "python", "LICENSEBUNDLE"), { recursive: true, force: true });
+  copyDir(path.join(tmp, "python"), pyDir);
+  rmrf(tmp);
+  fs.rmSync(tgz, { force: true });
+
+  const pyBin = path.join(pyDir, process.platform === "win32" ? "python.exe" : path.join("bin", "python3"));
+  const index = process.env.PIP_INDEX_URL || "https://pypi.tuna.tsinghua.edu.cn/simple";
+  console.log("[stage] pip install requests pycryptodome");
+  execSync(`"${pyBin}" -m pip install --no-warn-script-location --quiet requests pycryptodome -i ${index}`, {
+    stdio: "inherit",
+  });
+  fs.writeFileSync(okMarker, `${PBS_PYTHON}
+`);
+  console.log("[stage] bundled python:", pyDir);
+}
+
+stagePython();
+
 // 捆绑当前平台的 Node 运行时（避免 ELECTRON_RUN_AS_NODE 在含空格/中文路径下解析失败）
 const nodeDir = path.join(stageRoot, "node");
 fs.mkdirSync(nodeDir, { recursive: true });

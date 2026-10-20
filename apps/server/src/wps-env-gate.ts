@@ -91,9 +91,17 @@ export async function runEnvGate(refresh: boolean): Promise<EnvGateResult> {
     );
     return parseGateOutput(res.stdout, res.stderr);
   } catch (err) {
-    const e = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string };
+    const e = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string; code?: string };
     if (e.killed) {
       return { ok: false, ready: false, action: "timeout", message: "环境脚本执行超时，请重试" };
+    }
+    if ((e as { code?: string }).code === "ENOENT") {
+      return {
+        ok: false,
+        ready: false,
+        action: "no-python",
+        message: "本机没有可用的 Python 运行时（内置 Python 缺失，且 WPS_PYTHON / 系统 Python 均不可用）",
+      };
     }
     // 非零退出时脚本仍会输出结构化报告（未检测到紫金协作、缺依赖等），照常解析
     return parseGateOutput(e.stdout ?? "", e.stderr ?? e.message ?? "");

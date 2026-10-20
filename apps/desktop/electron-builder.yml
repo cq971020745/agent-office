@@ -21,6 +21,8 @@ extraResources:
     to: skills-catalog
   - from: ../../dist/stage/agent-packs
     to: agent-packs
+  - from: ../../dist/stage/python
+    to: python
 # Windows 未开开发者模式时，winCodeSign 解压 darwin 符号链接会失败；一体包不做代码签名
 forceCodeSigning: false
 # maximum 会把安装包压得很小，但解压上万小文件时安装极慢；normal 略增体积、安装快很多

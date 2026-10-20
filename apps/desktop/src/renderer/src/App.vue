@@ -521,7 +521,7 @@ async function submitWpsSync(): Promise<void> {
           </div>
           <p class="wps-section-label">WPS 365 用户信息</p>
           <p v-if="!wpsConfigured" class="pwd-err">
-            未检测到 WPS 登录态：请先在本机登录紫金协作客户端，或检查服务端 ~/.wps365/env.json 是否已写入 WPS_SID。
+            未检测到 WPS 登录态：请先登录本机紫金协作客户端，再点「同步 WPS 用户信息」，会自动导入登录态。
           </p>
           <template v-if="wpsProfile">
             <div class="wps-profile">
@@ -541,7 +541,7 @@ async function submitWpsSync(): Promise<void> {
         </div>
         <div class="dialog-foot">
           <button type="button" class="ghost" @click="wpsOpen = false">关闭</button>
-          <button type="button" class="primary" :disabled="wpsBusy || !wpsConfigured" @click="submitWpsSync">
+          <button type="button" class="primary" :disabled="wpsBusy" @click="submitWpsSync">
             {{ wpsBusy ? "同步中…" : wpsProfile ? "重新同步 WPS 信息" : "同步 WPS 用户信息" }}
           </button>
         </div>

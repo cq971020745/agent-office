@@ -223,6 +223,13 @@ export async function startBundledServer(onProgress?: ServerBootProgress): Promi
     SKILLS_CATALOG_DIR: path.join(root, "skills-catalog"),
     AGENT_PACKS_DIR: path.join(root, "agent-packs"),
   };
+  // wps365-env 闸门与 wps365-skill 脚本的内置 Python（stage 时已预装 requests/pycryptodome）
+  const bundledPython = path.join(
+    root,
+    "python",
+    process.platform === "win32" ? "python.exe" : path.join("bin", "python3")
+  );
+  if (fs.existsSync(bundledPython)) env.WPS_PYTHON = bundledPython;
   delete env.ELECTRON_RUN_AS_NODE;
 
   const logFd = fs.openSync(logPath, "a");

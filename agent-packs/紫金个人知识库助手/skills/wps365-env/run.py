@@ -159,13 +159,21 @@ def cmd_status(sidecar_mod):
     }
     payload.update(_payload_base(snap))
     if ready:
-        payload.update(_verify_session())
+        payload.update(_verify_session_safe())
         if not payload["api_ok"]:
             payload["ok"] = False
             payload["message"] = "环境变量在，但接口校验失败，请 ensure --refresh。%s" % (
                 payload.get("api_msg") or ""
             )
     return _report(payload["ok"], payload)
+
+
+def _verify_session_safe():
+    """接口校验的网络异常（断网/SSL/超时）不算脚本崩溃，降级为校验失败并给人话。"""
+    try:
+        return _verify_session()
+    except Exception as exc:  # noqa: BLE001 - 对外统一走 _report 的 message
+        return {"api_ok": False, "api_code": None, "user_name": None, "api_msg": str(exc)[:200]}
 
 
 def _import_from_client(sidecar_mod):
@@ -181,7 +189,7 @@ def _import_from_client(sidecar_mod):
         "X_ORIGIN": values["X_ORIGIN"],
     }
     _persist(persist_values, sidecar_mod)
-    verify = _verify_session()
+    verify = _verify_session_safe()
     ok = bool(verify.get("api_ok"))
     payload = {
         "ok": ok,
@@ -209,7 +217,7 @@ def cmd_ensure(sidecar_mod, refresh):
     ready = sidecar_mod.is_private_ready(snap)
 
     if ready and not refresh:
-        verify = _verify_session()
+        verify = _verify_session_safe()
         if verify.get("api_ok"):
             payload = {
                 "ok": True,

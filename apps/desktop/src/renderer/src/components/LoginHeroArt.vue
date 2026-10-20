@@ -1,11 +1,14 @@
 <script setup lang="ts">
-/** 登录页主视觉：木牛流马 3D 渲染形象（品牌主视觉素材抠图）+ 悬浮信息卡与 任务/驮运/交付 */
+/** 登录页主视觉：机甲能量牛（SVG+CSS3 角色，与右下角桌宠同源）+ 悬浮信息卡与 任务/驮运/交付 */
+import MuniCartArt from "./MuniCartArt.vue";
 </script>
 
 <template>
   <div class="hero-art" aria-hidden="true">
     <span class="glow" />
-    <img class="cart" src="../assets/muni-cart.png" alt="" draggable="false" />
+    <div class="cart-wrap">
+      <MuniCartArt id-prefix="lh" />
+    </div>
 
     <div class="chip a">
       <i class="line w-44" />
@@ -35,23 +38,25 @@
   width: 100%;
   max-width: 560px;
   margin: 6px 0 2px;
-  aspect-ratio: 1040 / 752;
+  aspect-ratio: 440 / 300;
 }
 .glow {
   position: absolute;
-  inset: 8% 4% 12%;
+  inset: 10% 6% 14%;
   border-radius: 50%;
-  background: radial-gradient(ellipse at 48% 55%, rgba(var(--accent-rgb), 0.22), transparent 65%);
+  background: radial-gradient(ellipse at 48% 58%, rgba(var(--accent-rgb), 0.22), transparent 65%);
   filter: blur(10px);
 }
-.cart {
+.cart-wrap {
   position: absolute;
-  inset: 0;
+  inset: 0 0 6%;
+  --mood: rgb(var(--accent-rgb));
+  --mood-soft: rgba(var(--accent-rgb), 0.35);
+}
+.cart-wrap :deep(.cart) {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  user-select: none;
-  filter: drop-shadow(0 20px 30px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 16px 26px rgba(0, 0, 0, 0.32));
   animation: bob 5.2s ease-in-out infinite;
 }
 .chip {
@@ -66,8 +71,8 @@
   animation: chip-bob 6s ease-in-out infinite;
 }
 .chip.a {
-  left: 2%;
-  top: 16%;
+  left: 1%;
+  top: 20%;
 }
 .chip.c {
   right: 1.5%;
@@ -112,7 +117,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -6px;
+  bottom: -4px;
   display: flex;
   justify-content: center;
   gap: 96px;
@@ -144,12 +149,12 @@
   }
 }
 
-:root[data-fx="off"] .cart,
+:root[data-fx="off"] .cart-wrap :deep(.cart),
 :root[data-fx="off"] .chip {
   animation: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
-  .cart,
+  .cart-wrap :deep(.cart),
   .chip {
     animation: none !important;
   }

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * 木牛流马桌宠：3D 渲染形象（品牌主视觉素材抠图，与登录页主视觉同源）。
- * 静态形象，状态用脚下光圈 / 尘埃颜色与驮运节奏表达：
- * idle 暖金 · working 主题色疾行 · success 金辉 · error 赤闪 · curious 青。
- * 支持拖拽换位（整个图片区域可抓取），位置记忆在 localStorage，默认右下角；
+ * 木牛流马桌宠：机甲能量牛（SVG+CSS3 角色，与登录页主视觉同源）。
+ * 双前腿 + 远侧液压腿交替踏步，双能量轮转动，车身起伏、能量流线流动。
+ * 状态用能量色与步频表达：idle 冰蓝 · working 主题色 · success 金 · error 赤 · curious 青。
+ * 支持拖拽换位（整个形象区域可抓取），位置记忆在 localStorage，默认右下角；
  * 启动时会把历史位置拉回可视区内，避免拖出屏幕后「消失」。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import MuniCartArt from "./MuniCartArt.vue";
 
 const props = defineProps<{
   mood?: "idle" | "working" | "success" | "error" | "curious";
@@ -38,7 +39,7 @@ const pos = ref<{ left: number; top: number } | null>(readStoredPos());
 /** 限制在视口内（宽度按当前渲染尺寸量） */
 function clampPos(next: { left: number; top: number }): { left: number; top: number } {
   const w = root.value?.offsetWidth ?? 150;
-  const h = root.value?.offsetHeight ?? 108;
+  const h = root.value?.offsetHeight ?? 102;
   const maxX = Math.max(MARGIN, window.innerWidth - w - MARGIN);
   const maxY = Math.max(MARGIN, window.innerHeight - h - MARGIN);
   return {
@@ -111,7 +112,7 @@ const title = computed(() => {
   <aside
     ref="root"
     class="muni"
-    :class="[`mood-${mood}`, { dragging }]"
+    :class="[{ dragging }]"
     :style="pos ? { left: `${pos.left}px`, top: `${pos.top}px`, right: 'auto', bottom: 'auto' } : undefined"
     :title="title"
     aria-hidden="true"
@@ -119,23 +120,20 @@ const title = computed(() => {
     <span class="aura" />
     <span class="dust d1" />
     <span class="dust d2" />
-    <img
-      class="cart"
-      src="../assets/muni-cart-pet.png"
-      alt=""
-      draggable="false"
+    <div
+      class="rig"
       @pointerdown="onDragStart"
       @pointermove="onDragMove"
       @pointerup="onDragEnd"
       @pointercancel="onDragEnd"
-    />
+    >
+      <MuniCartArt id-prefix="mb" :mood="mood" />
+    </div>
   </aside>
 </template>
 
 <style scoped>
 .muni {
-  --mood: #e8c47c;
-  --mood-soft: rgba(232, 196, 124, 0.35);
   position: fixed;
   right: 16px;
   bottom: 12px;
@@ -143,25 +141,28 @@ const title = computed(() => {
   width: 150px;
   pointer-events: none;
   user-select: none;
-  animation: stroll 5.2s ease-in-out infinite;
 }
-.muni .cart {
+.muni .rig {
   position: relative;
   z-index: 1;
-  display: block;
   width: 100%;
-  height: auto;
   pointer-events: auto;
   cursor: grab;
   user-select: none;
   filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.3));
   animation: bob 4.6s ease-in-out infinite;
 }
-.muni.dragging .cart {
-  cursor: grabbing;
+.muni .rig :deep(.cart) {
+  animation: trot 0.9s ease-in-out infinite;
 }
-.muni.dragging .cart,
-.muni.dragging {
+.muni .rig.fast-true :deep(.cart) {
+  animation-duration: 0.55s;
+}
+.muni.dragging .rig {
+  cursor: grabbing;
+  animation-play-state: paused;
+}
+.muni.dragging .rig :deep(.cart) {
   animation-play-state: paused;
 }
 .muni .aura {
@@ -171,7 +172,7 @@ const title = computed(() => {
   bottom: -2px;
   height: 16px;
   border-radius: 50%;
-  background: radial-gradient(ellipse, var(--mood-soft), transparent 70%);
+  background: radial-gradient(ellipse, rgba(87, 200, 255, 0.35), transparent 70%);
   filter: blur(6px);
   animation: aura 2.4s ease-in-out infinite;
 }
@@ -181,68 +182,26 @@ const title = computed(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--mood) 35%, #8a6238);
+  background: #7fa8c9;
   filter: blur(1px);
   opacity: 0;
+  animation: dust 0.72s ease-out infinite;
 }
 .muni .dust.d1 {
   right: 26px;
-  animation: dust 0.72s ease-out infinite;
 }
 .muni .dust.d2 {
   right: 40px;
-  animation: dust 0.72s ease-out infinite 0.36s;
+  animation-delay: 0.36s;
 }
 
-/* —— 各状态光色 / 节奏 —— */
-.mood-idle {
-  --mood: #e8c47c;
-  --mood-soft: rgba(232, 196, 124, 0.35);
-}
-.mood-working {
-  --mood: rgb(var(--accent-rgb));
-  --mood-soft: rgba(var(--accent-rgb), 0.4);
-  animation-duration: 3.2s;
-}
-.mood-working .cart {
-  animation-duration: 1.6s;
-}
-.mood-working .dust.d1 {
-  animation-duration: 0.46s;
-}
-.mood-working .dust.d2 {
-  animation-duration: 0.46s;
-  animation-delay: 0.23s;
-}
-.mood-success {
-  --mood: #ffd873;
-  --mood-soft: rgba(255, 216, 115, 0.45);
-}
-.mood-error {
-  --mood: #ff6b6b;
-  --mood-soft: rgba(255, 107, 107, 0.42);
-}
-.mood-curious {
-  --mood: #5ec4c0;
-  --mood-soft: rgba(94, 196, 192, 0.4);
-}
-
-@keyframes bob {
+@keyframes trot {
   0%,
   100% {
-    transform: translateY(0) rotate(-0.6deg);
+    transform: translateY(0) rotate(-0.5deg);
   }
   50% {
-    transform: translateY(-2.5px) rotate(0.6deg);
-  }
-}
-@keyframes stroll {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  50% {
-    transform: translateX(-22px);
+    transform: translateY(-2.5px) rotate(0.5deg);
   }
 }
 @keyframes dust {
@@ -279,8 +238,8 @@ const title = computed(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .muni,
-  .muni .cart,
+  .muni .rig,
+  .muni .rig :deep(.cart),
   .muni .dust,
   .muni .aura {
     animation: none !important;

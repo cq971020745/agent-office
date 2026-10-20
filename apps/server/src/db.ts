@@ -391,24 +391,35 @@ export function migrate(): void {
 // 专家不保存供应商或默认模型，派发时由当前用户从自己的模型里选。
 export function ensureDefaultAgent(): void {
   const DEFAULT_ID = "builtin-general-assistant";
-  const exists = db.prepare("SELECT id FROM agents WHERE id = ?").get(DEFAULT_ID);
-  if (exists) return;
-  db.prepare(
-    "INSERT INTO agents (id, name, description, system_prompt, provider_id, model_id, tags, folder, high_risk, tool_policy, created_at) VALUES (?, ?, ?, ?, NULL, NULL, ?, '', 0, ?, ?)"
-  ).run(
-    DEFAULT_ID,
-    "通用助手",
-    "内置默认专家：未选择专家时的兜底，可处理日常问答、写作、查询等通用办公任务",
-    [
-      "你是「通用助手」，澄台的内置默认专家。",
-      "职责：在用户没有指定专家时承接任务，覆盖日常办公问答、文案撰写、资料整理、信息查询等通用场景。",
-      "行为准则：直接解决问题，不推荐其他专家；任务超出能力或需要 WPS 365 数据时，按技能说明加载并使用对应技能。",
-    ].join("\n"),
-    JSON.stringify(["内置"]),
-    "{}",
-    now()
-  );
-  console.log(`[agents] 已创建内置默认专家「通用助手」`);
+  const SYSTEM_PROMPT = [
+    "你是「通用助手」，木牛流马的内置默认专家。",
+    "职责：在用户没有指定专家时承接任务，覆盖日常办公问答、文案撰写、资料整理、信息查询等通用场景。",
+    "行为准则：直接解决问题，不推荐其他专家；任务超出能力或需要 WPS 365 数据时，按技能说明加载并使用对应技能。",
+  ].join("\n");
+  const exists = db.prepare("SELECT id, system_prompt FROM agents WHERE id = ?").get(DEFAULT_ID) as
+    | { id: string; system_prompt: string }
+    | undefined;
+  if (!exists) {
+    db.prepare(
+      "INSERT INTO agents (id, name, description, system_prompt, provider_id, model_id, tags, folder, high_risk, tool_policy, created_at) VALUES (?, ?, ?, ?, NULL, NULL, ?, '', 0, ?, ?)"
+    ).run(
+      DEFAULT_ID,
+      "通用助手",
+      "内置默认专家：未选择专家时的兜底，可处理日常问答、写作、查询等通用办公任务",
+      SYSTEM_PROMPT,
+      JSON.stringify(["内置"]),
+      "{}",
+      now()
+    );
+    console.log(`[agents] 已创建内置默认专家「通用助手」`);
+    return;
+  }
+  // 老库的默认提示词还写着旧产品名（Agent Office / 澄台）：仅当仍是默认文案、未被用户自定义时才就地升级
+  const stalePrompt = /Agent Office|澄台/.test(exists.system_prompt);
+  if (stalePrompt && exists.system_prompt !== SYSTEM_PROMPT) {
+    db.prepare("UPDATE agents SET system_prompt = ? WHERE id = ?").run(SYSTEM_PROMPT, DEFAULT_ID);
+    console.log(`[agents] 内置默认专家提示词已升级为木牛流马文案`);
+  }
 }
 
 export const uuid = () => randomUUID();

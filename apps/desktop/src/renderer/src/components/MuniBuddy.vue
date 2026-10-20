@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * 木牛流马桌宠：无文字气泡，用光色 / 形态表达状态。
- * idle 暖木色慢走 · working 主题色疾走 · success 金辉 · error 赤闪 · curious 瞳孔亮起
+ * 木牛流马桌宠：机甲木牛（参考品牌主视觉——蓝光牛角、「牛」纹护额与胸牌、背上货箱蓝旗）。
+ * 无文字气泡，用光色 / 形态表达状态：
+ * idle 暖金待命 · working 主题色疾走 · success 金辉 · error 赤闪 · curious 瞳孔亮起。
  * 支持拖拽换位（按绘画区域命中，透明处可穿透），位置记忆在 localStorage，默认右下角。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
@@ -39,8 +40,8 @@ const pos = ref<{ left: number; top: number } | null>(readStoredPos());
 
 /** 限制在视口内（宽度按当前渲染尺寸量） */
 function clampPos(next: { left: number; top: number }): { left: number; top: number } {
-  const w = root.value?.offsetWidth ?? 118;
-  const h = root.value?.offsetHeight ?? 110;
+  const w = root.value?.offsetWidth ?? 126;
+  const h = root.value?.offsetHeight ?? 112;
   const maxX = Math.max(MARGIN, window.innerWidth - w - MARGIN);
   const maxY = Math.max(MARGIN, window.innerHeight - h - MARGIN);
   return {
@@ -87,8 +88,9 @@ function onMove(e: MouseEvent): void {
   const el = root.value;
   if (!el) return;
   const r = el.getBoundingClientRect();
-  const cx = r.left + r.width * 0.34;
-  const cy = r.top + r.height * 0.32;
+  // 瞳孔朝向以头部中心（画布 80/160, 42/142）为基准
+  const cx = r.left + r.width * 0.5;
+  const cy = r.top + r.height * 0.3;
   const dx = (e.clientX - cx) / Math.max(window.innerWidth, 1);
   const dy = (e.clientY - cy) / Math.max(window.innerHeight, 1);
   pupilX.value = Math.max(-2.4, Math.min(2.4, dx * 11));
@@ -148,7 +150,7 @@ const title = computed(() => {
 
     <svg
       class="ox"
-      viewBox="0 0 140 124"
+      viewBox="0 0 160 142"
       xmlns="http://www.w3.org/2000/svg"
       @pointerdown="onDragStart"
       @pointermove="onDragMove"
@@ -156,20 +158,34 @@ const title = computed(() => {
       @pointercancel="onDragEnd"
     >
       <defs>
-        <linearGradient id="mb-wood" x1="24" y1="20" x2="120" y2="110" gradientUnits="userSpaceOnUse">
-          <stop class="wood-a" stop-color="#f0d9b0" />
-          <stop class="wood-b" offset="0.5" stop-color="#c9955a" />
-          <stop class="wood-c" offset="1" stop-color="#6e421c" />
+        <linearGradient id="mb-wood" x1="0" y1="0" x2="0" y2="1">
+          <stop class="wood-a" stop-color="#f4dca8" />
+          <stop class="wood-b" offset="0.52" stop-color="#dcab60" />
+          <stop class="wood-c" offset="1" stop-color="#9a6428" />
         </linearGradient>
-        <linearGradient id="mb-deep" x1="0" y1="0" x2="0" y2="1">
-          <stop class="deep-a" stop-color="#b88448" />
-          <stop class="deep-b" offset="1" stop-color="#3d2410" />
+        <linearGradient id="mb-wood-deep" x1="0" y1="0" x2="0" y2="1">
+          <stop stop-color="#d9a95e" />
+          <stop offset="1" stop-color="#6e421c" />
+        </linearGradient>
+        <linearGradient id="mb-metal" x1="0" y1="0" x2="0" y2="1">
+          <stop stop-color="#48586a" />
+          <stop offset="1" stop-color="#1e2933" />
         </linearGradient>
         <linearGradient id="mb-horn" x1="0" y1="1" x2="1" y2="0">
-          <stop class="horn-a" stop-color="#e8c896" />
-          <stop class="horn-b" offset="1" stop-color="#5c3416" />
+          <stop stop-color="#7f95ab" />
+          <stop offset="0.55" stop-color="#c3d3e2" />
+          <stop offset="1" stop-color="#e9f1f8" />
         </linearGradient>
-        <filter id="mb-glow" x="-40%" y="-40%" width="180%" height="180%">
+        <linearGradient id="mb-cloth" x1="0" y1="0" x2="0" y2="1">
+          <stop stop-color="#5f92dc" />
+          <stop offset="1" stop-color="#2d5c9e" />
+        </linearGradient>
+        <radialGradient id="mb-iris" cx="0.5" cy="0.42" r="0.6">
+          <stop stop-color="#c8ecff" />
+          <stop offset="0.55" stop-color="#6fb9f2" />
+          <stop offset="1" stop-color="#2f6ea8" />
+        </radialGradient>
+        <filter id="mb-glow" x="-60%" y="-60%" width="220%" height="220%">
           <feGaussianBlur stdDeviation="1.6" result="b" />
           <feMerge>
             <feMergeNode in="b" />
@@ -178,116 +194,151 @@ const title = computed(() => {
         </filter>
       </defs>
 
-      <ellipse class="ground" cx="72" cy="116" rx="40" ry="4.5" fill="rgba(0,0,0,0.12)" />
+      <!-- 地面与光环 -->
+      <ellipse class="ground" cx="80" cy="133" rx="46" ry="5.5" fill="rgba(0,0,0,0.18)" />
+      <ellipse class="halo spin" cx="80" cy="130" rx="54" ry="8" />
+      <ellipse class="halo faint" cx="80" cy="70" rx="68" ry="17" transform="rotate(-9 80 70)" />
 
+      <!-- 尾巴（短尾 + 绒球） -->
+      <g class="tail">
+        <path d="M126 82 C138 85 141 93 135 98" fill="none" stroke="#8a5a26" stroke-width="4.5" stroke-linecap="round" />
+        <circle cx="134" cy="99" r="3.4" fill="#2d5c9e" stroke="#1e3a5f" stroke-width="0.9" />
+      </g>
+
+      <!-- 后腿（深色金属） -->
       <g class="legs back">
-        <ellipse cx="92" cy="78" rx="8" ry="4" fill="#6a3d18" stroke="#3d2410" stroke-width="0.9" />
-        <path class="leg" d="M86 78 L82 98 L90 100 L96 80 Z" fill="url(#mb-deep)" stroke="#3d2410" stroke-width="1" />
-        <path class="leg" d="M84 98 L80 112 L90 114 L92 100 Z" fill="url(#mb-wood)" stroke="#3d2410" stroke-width="1" />
-        <ellipse cx="85" cy="114" rx="5.5" ry="2.4" fill="#2a1a08" />
+        <path class="leg" d="M42 100 h14 a5 5 0 0 1 5 5 v14 h-24 v-14 a5 5 0 0 1 5 -5 z" fill="url(#mb-metal)" stroke="#141c24" stroke-width="1" />
+        <rect x="38" y="123" width="22" height="9" rx="3.5" fill="#10161c" />
       </g>
       <g class="legs back b">
-        <ellipse cx="108" cy="76" rx="7" ry="3.5" fill="#6a3d18" stroke="#3d2410" stroke-width="0.9" />
-        <path class="leg" d="M102 76 L100 96 L108 98 L112 78 Z" fill="url(#mb-deep)" stroke="#3d2410" stroke-width="1" />
-        <path class="leg" d="M102 96 L106 112 L114 112 L110 98 Z" fill="url(#mb-wood)" stroke="#3d2410" stroke-width="1" />
-        <ellipse cx="110" cy="113" rx="5.5" ry="2.4" fill="#2a1a08" />
+        <path class="leg" d="M104 100 h14 a5 5 0 0 1 5 5 v14 h-24 v-14 a5 5 0 0 1 5 -5 z" fill="url(#mb-metal)" stroke="#141c24" stroke-width="1" />
+        <rect x="100" y="123" width="22" height="9" rx="3.5" fill="#10161c" />
       </g>
 
-      <g class="crate">
-        <path d="M46 42 L110 36 L116 70 L50 78 Z" fill="url(#mb-wood)" stroke="#3d2410" stroke-width="1.35" />
-        <path d="M46 42 L110 36 L110 46 L46 52 Z" fill="#e8c896" opacity="0.5" />
-        <path d="M56 52h46M60 64h40" stroke="#3d2410" stroke-opacity="0.25" stroke-width="1" />
-        <path class="rim" d="M48 42 L108 36" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+      <!-- 背上货箱（两根原木 + 木箱），位于躯干右后上方 -->
+      <g class="cargo">
+        <rect x="96" y="26" width="40" height="11" rx="5.5" fill="url(#mb-wood-deep)" stroke="#4e2c12" stroke-width="1" />
+        <ellipse cx="136" cy="31.5" rx="3.2" ry="5" fill="#e8c896" stroke="#4e2c12" stroke-width="0.8" />
+        <ellipse cx="136" cy="31.5" rx="1.4" ry="2.4" fill="none" stroke="#8a5a26" stroke-width="0.8" />
+        <rect x="92" y="38" width="44" height="11" rx="5.5" fill="url(#mb-wood)" stroke="#4e2c12" stroke-width="1" />
+        <ellipse cx="136" cy="43.5" rx="3.2" ry="5" fill="#f0d9b0" stroke="#4e2c12" stroke-width="0.8" />
+        <ellipse cx="136" cy="43.5" rx="1.4" ry="2.4" fill="none" stroke="#8a5a26" stroke-width="0.8" />
+        <rect x="102" y="48" width="36" height="26" rx="3" fill="url(#mb-wood)" stroke="#4e2c12" stroke-width="1.1" />
+        <path d="M102 56 h36 M102 65 h36" stroke="#4e2c12" stroke-opacity="0.4" stroke-width="0.9" />
       </g>
 
-      <path
-        d="M42 60 C58 48 90 46 114 52 C122 56 124 68 120 78
-           C116 88 96 92 72 92 C52 92 40 84 36 74 C34 66 36 62 42 60 Z"
-        fill="url(#mb-deep)"
-        stroke="#3d2410"
-        stroke-width="1.3"
-      />
-
-      <!-- 电源：拨杆位置随状态变化 -->
-      <g class="power-switch">
-        <rect x="68" y="62" width="28" height="14" rx="4" fill="rgba(12,18,24,0.55)" stroke="#3d2410" stroke-width="1" />
-        <rect class="switch-ring" x="68" y="62" width="28" height="14" rx="4" stroke="currentColor" stroke-width="1.2" fill="none" />
-        <circle class="led" cx="74" cy="69" r="2.4" filter="url(#mb-glow)" />
-        <rect class="toggle" x="80" y="65" width="12" height="8" rx="2.5" fill="url(#mb-wood)" stroke="#3d2410" stroke-width="0.8" />
+      <!-- 躯干（拼接木甲） -->
+      <g class="torso">
+        <path d="M32 82 C32 67 46 60 80 60 C114 60 128 67 128 82 L128 95 C128 104 114 108 80 108 C46 108 32 104 32 95 Z" fill="url(#mb-wood)" stroke="#5c3416" stroke-width="1.3" />
+        <path d="M36 76 C50 70 66 68 80 68 M124 76 C112 70 98 68 84 68" fill="none" stroke="#5c3416" stroke-opacity="0.35" stroke-width="1" />
+        <path d="M40 96 C56 100 70 101 80 101 C90 101 104 100 120 96" fill="none" stroke="#5c3416" stroke-opacity="0.3" stroke-width="1" />
+        <!-- 肩/髋关节光圈 -->
+        <circle cx="43" cy="87" r="7" fill="url(#mb-metal)" stroke="#141c24" stroke-width="1" />
+        <circle class="glow-stroke" cx="43" cy="87" r="4" fill="none" stroke-width="1.6" opacity="0.9" filter="url(#mb-glow)" />
+        <circle cx="117" cy="87" r="7" fill="url(#mb-metal)" stroke="#141c24" stroke-width="1" />
+        <circle class="glow-stroke" cx="117" cy="87" r="4" fill="none" stroke-width="1.6" opacity="0.9" filter="url(#mb-glow)" />
       </g>
 
+      <!-- 蓝旗（牛），垂在躯干右侧 -->
+      <g class="banner">
+        <path d="M126 46 h20 v32 l-5 -4 -5 4 -5 -4 -5 4 z" fill="url(#mb-cloth)" stroke="#1e3a5f" stroke-width="1" />
+        <text class="emblem" x="136" y="66" text-anchor="middle" font-size="14">牛</text>
+      </g>
+
+      <!-- 前腿（木甲 + 膝盖光点） -->
       <g class="legs front">
-        <ellipse cx="56" cy="80" rx="9" ry="4.5" fill="#7a4a22" stroke="#3d2410" stroke-width="1" />
-        <path class="leg l1" d="M50 80 L44 100 L54 102 L60 82 Z" fill="url(#mb-wood)" stroke="#3d2410" stroke-width="1.1" />
-        <path class="leg l1b" d="M46 100 L40 114 L52 116 L56 102 Z" fill="url(#mb-deep)" stroke="#3d2410" stroke-width="1.1" />
-        <ellipse cx="46" cy="116" rx="6" ry="2.6" fill="#2a1a08" />
-        <circle class="joint" cx="54" cy="88" r="1.7" />
+        <path class="leg l1" d="M54 102 h16 a6 6 0 0 1 6 6 v14 h-28 v-14 a6 6 0 0 1 6 -6 z" fill="url(#mb-wood)" stroke="#5c3416" stroke-width="1.1" />
+        <circle class="glow-fill" cx="62" cy="111" r="2.2" filter="url(#mb-glow)" />
+        <rect x="49" y="122" width="26" height="10" rx="4" fill="#1a232c" stroke="#0d1319" stroke-width="0.9" />
       </g>
       <g class="legs front b">
-        <ellipse cx="72" cy="82" rx="8" ry="4" fill="#7a4a22" stroke="#3d2410" stroke-width="1" />
-        <path class="leg l2" d="M66 82 L64 102 L74 104 L78 84 Z" fill="url(#mb-wood)" stroke="#3d2410" stroke-width="1.1" />
-        <path class="leg l2b" d="M66 102 L68 116 L80 116 L76 104 Z" fill="url(#mb-deep)" stroke="#3d2410" stroke-width="1.1" />
-        <ellipse cx="74" cy="117" rx="6" ry="2.6" fill="#2a1a08" />
-        <circle class="joint" cx="70" cy="90" r="1.7" />
+        <path class="leg l2" d="M90 102 h16 a6 6 0 0 1 6 6 v14 h-28 v-14 a6 6 0 0 1 6 -6 z" fill="url(#mb-wood)" stroke="#5c3416" stroke-width="1.1" />
+        <circle class="glow-fill" cx="98" cy="111" r="2.2" filter="url(#mb-glow)" />
+        <rect x="85" y="122" width="26" height="10" rx="4" fill="#1a232c" stroke="#0d1319" stroke-width="0.9" />
       </g>
 
+      <!-- 颈圈（蓝甲 + 光钉）与胸牌 -->
+      <g class="collar">
+        <path d="M54 66 C61 71 70 73 80 73 C90 73 99 71 106 66 L106 75 C99 80 90 82 80 82 C70 82 61 80 54 75 Z" fill="url(#mb-cloth)" stroke="#1e3a5f" stroke-width="1" />
+        <circle class="glow-fill" cx="64" cy="75" r="1.5" filter="url(#mb-glow)" />
+        <circle class="glow-fill" cx="96" cy="75" r="1.5" filter="url(#mb-glow)" />
+        <line x1="80" y1="82" x2="80" y2="87" stroke="#c9955a" stroke-width="1.6" />
+        <circle cx="80" cy="93" r="8" fill="url(#mb-cloth)" stroke="#c9955a" stroke-width="1.8" />
+        <text class="emblem" x="80" y="97" text-anchor="middle" font-size="10">牛</text>
+      </g>
+
+      <!-- 头部 -->
       <g class="head">
-        <path
-          d="M42 62 C28 58 16 64 12 76 C10 86 18 92 30 90 L44 84 Z"
-          fill="url(#mb-wood)"
-          stroke="#3d2410"
-          stroke-width="1.2"
-        />
-        <ellipse cx="20" cy="72" rx="14" ry="11" fill="url(#mb-wood)" stroke="#3d2410" stroke-width="1.25" />
-        <ellipse cx="14" cy="62" rx="4.5" ry="3" fill="#8a5530" stroke="#3d2410" stroke-width="0.8" />
-        <ellipse cx="28" cy="60" rx="4.5" ry="3" fill="#8a5530" stroke="#3d2410" stroke-width="0.8" />
-        <path
-          class="horn"
-          d="M13 61 C8 50 4 40 8 30 C11 24 16 26 17 32 C18 42 18 52 18 60 Z"
-          fill="url(#mb-horn)"
-          stroke="#3d2410"
-          stroke-width="1"
-        />
-        <path
-          class="horn"
-          d="M29 59 C36 48 46 38 56 32 C62 28 66 34 62 40 C54 50 40 56 32 60 Z"
-          fill="url(#mb-horn)"
-          stroke="#3d2410"
-          stroke-width="1"
-        />
-        <circle class="horn-tip" cx="10" cy="32" r="1.8" filter="url(#mb-glow)" />
-        <circle class="horn-tip" cx="60" cy="34" r="1.8" filter="url(#mb-glow)" />
+        <!-- 耳朵（角 base 下方，向外） -->
+        <ellipse cx="42" cy="45" rx="6.5" ry="9.5" transform="rotate(-24 42 45)" fill="url(#mb-wood)" stroke="#5c3416" stroke-width="1" />
+        <ellipse cx="118" cy="45" rx="6.5" ry="9.5" transform="rotate(24 118 45)" fill="url(#mb-wood)" stroke="#5c3416" stroke-width="1" />
+        <ellipse cx="42.5" cy="46" rx="2.8" ry="5" transform="rotate(-24 42.5 46)" fill="#f7ecd8" />
+        <ellipse cx="117.5" cy="46" rx="2.8" ry="5" transform="rotate(24 117.5 46)" fill="#f7ecd8" />
 
-        <ellipse cx="11" cy="80" rx="6" ry="3.8" fill="#a87038" stroke="#3d2410" stroke-width="0.85" />
-        <circle cx="9" cy="80" r="0.85" fill="#1a1208" />
-        <circle cx="13.5" cy="80" r="0.85" fill="#1a1208" />
+        <!-- 牛角（粗弯角 + 棱线 + 光刃） -->
+        <path d="M62 29 C48 26 34 19 26 8 C22 2 13 4 15 11 C20 24 38 34 60 37 Z" fill="url(#mb-horn)" stroke="#4a5a6a" stroke-width="1.1" />
+        <path d="M58 31 C46 28 34 22 27 13" fill="none" stroke="#4a5a6a" stroke-opacity="0.5" stroke-width="1" />
+        <path d="M52 33 C42 29 34 24 29 18" fill="none" stroke="#4a5a6a" stroke-opacity="0.5" stroke-width="1" />
+        <path d="M60 33 C46 30 33 23 25 11" fill="none" class="glow-stroke" stroke-width="1.4" opacity="0.7" filter="url(#mb-glow)" />
+        <path d="M98 29 C112 26 126 19 134 8 C138 2 147 4 145 11 C140 24 122 34 100 37 Z" fill="url(#mb-horn)" stroke="#4a5a6a" stroke-width="1.1" />
+        <path d="M102 31 C114 28 126 22 133 13" fill="none" stroke="#4a5a6a" stroke-opacity="0.5" stroke-width="1" />
+        <path d="M108 33 C118 29 126 24 131 18" fill="none" stroke="#4a5a6a" stroke-opacity="0.5" stroke-width="1" />
+        <path d="M100 33 C114 30 127 23 135 11" fill="none" class="glow-stroke" stroke-width="1.4" opacity="0.7" filter="url(#mb-glow)" />
 
-        <ellipse class="eye-white" cx="18" cy="68" rx="3" ry="3.3" fill="#f7efe3" />
-        <ellipse class="eye-white" cx="28" cy="67" rx="2.8" ry="3.1" fill="#f7efe3" />
-        <circle class="pupil" :cx="18 + pupilX" :cy="68 + pupilY" r="1.2" fill="#1a1208" />
-        <circle class="pupil" :cx="28 + pupilX" :cy="67 + pupilY" r="1.15" fill="#1a1208" />
-        <circle class="eye-glow" cx="18" cy="68" r="4.5" />
-        <circle class="eye-glow" cx="28" cy="67" r="4.2" />
-        <path class="lid" d="M15 68h6M25 67h6" stroke="#5c3416" stroke-width="2.2" stroke-linecap="round" />
+        <!-- 头甲 -->
+        <path d="M44 52 C44 31 58 20 80 20 C102 20 116 31 116 52 C116 64 104 71 80 71 C56 71 44 64 44 52 Z" fill="url(#mb-wood)" stroke="#5c3416" stroke-width="1.3" />
+        <path d="M50 44 C54 33 63 26 72 25 M110 44 C106 33 97 26 88 25" fill="none" stroke="#5c3416" stroke-opacity="0.3" stroke-width="1" />
 
-        <path class="mouth idle" d="M14 86c1.6 1.2 5 1.2 6.5 0" stroke="#3d2410" stroke-width="1" fill="none" stroke-linecap="round" />
-        <path class="mouth working" d="M15 86h6" stroke="#3d2410" stroke-width="1.1" fill="none" stroke-linecap="round" />
-        <path class="mouth success" d="M13 85c2 2.4 7.5 2.4 9.5 0" stroke="#3d2410" stroke-width="1.1" fill="none" stroke-linecap="round" />
-        <path class="mouth error" d="M15 88c1.8-1.8 5.5-1.8 7.5 0" stroke="#3d2410" stroke-width="1.1" fill="none" stroke-linecap="round" />
-        <circle class="mouth curious" cx="18" cy="86.5" r="1.2" fill="#3d2410" />
+        <!-- 护额「牛」纹 -->
+        <path d="M69 22 h22 l4 7 -4 7 h-22 l-4 -7 z" fill="url(#mb-cloth)" stroke="#1e3a5f" stroke-width="1" />
+        <text class="emblem" x="80" y="34" text-anchor="middle" font-size="10">牛</text>
+
+        <!-- 口鼻 -->
+        <path d="M58 48 C58 43 66 41 80 41 C94 41 102 43 102 48 L102 58 C102 66 92 70 80 70 C68 70 58 66 58 58 Z" fill="#f7ecd8" stroke="#c9a06a" stroke-width="1" />
+        <ellipse cx="69" cy="55" rx="2.6" ry="3.4" fill="#c9a06a" />
+        <ellipse cx="91" cy="55" rx="2.6" ry="3.4" fill="#c9a06a" />
+
+        <!-- 眼睛（大眼 + 瞳孔跟随） -->
+        <g class="eye">
+          <ellipse cx="60" cy="38" rx="8.5" ry="9.5" fill="#fdf9f0" stroke="#5c3416" stroke-width="1.1" />
+          <g class="iris" :transform="`translate(${pupilX} ${pupilY})`">
+            <circle cx="60" cy="38" r="5.4" fill="url(#mb-iris)" />
+            <circle cx="60" cy="38" r="2.5" fill="#12283c" />
+            <circle cx="58.2" cy="35.8" r="1.3" fill="#eaf6ff" />
+          </g>
+          <circle class="eye-glow" cx="60" cy="38" r="10.5" />
+          <rect class="lid" x="50" y="27" width="20" height="22" rx="8" />
+        </g>
+        <g class="eye">
+          <ellipse cx="100" cy="38" rx="8.5" ry="9.5" fill="#fdf9f0" stroke="#5c3416" stroke-width="1.1" />
+          <g class="iris" :transform="`translate(${pupilX} ${pupilY})`">
+            <circle cx="100" cy="38" r="5.4" fill="url(#mb-iris)" />
+            <circle cx="100" cy="38" r="2.5" fill="#12283c" />
+            <circle cx="98.2" cy="35.8" r="1.3" fill="#eaf6ff" />
+          </g>
+          <circle class="eye-glow" cx="100" cy="38" r="10.5" />
+          <rect class="lid" x="90" y="27" width="20" height="22" rx="8" />
+        </g>
+
+        <!-- 嘴（按状态切换） -->
+        <path class="mouth idle" d="M72 63 c2 1.6 6 1.6 8 0" stroke="#5c3416" stroke-width="1.1" fill="none" stroke-linecap="round" />
+        <path class="mouth working" d="M72 63 h8" stroke="#5c3416" stroke-width="1.2" fill="none" stroke-linecap="round" />
+        <path class="mouth success" d="M70 62 c2.6 3 9.4 3 12 0" stroke="#5c3416" stroke-width="1.2" fill="none" stroke-linecap="round" />
+        <path class="mouth error" d="M72 65 c2 -2 6 -2 8 0" stroke="#5c3416" stroke-width="1.2" fill="none" stroke-linecap="round" />
+        <circle class="mouth curious" cx="73" cy="63" r="1.4" fill="#5c3416" />
       </g>
 
       <!-- 状态粒子（无文字） -->
       <g class="fx working-fx">
-        <circle cx="120" cy="28" r="1.6" />
-        <circle cx="128" cy="40" r="1.1" />
-        <circle cx="116" cy="44" r="0.9" />
+        <circle cx="140" cy="16" r="1.7" />
+        <circle cx="148" cy="28" r="1.1" />
+        <circle cx="136" cy="32" r="0.9" />
       </g>
       <g class="fx success-fx">
-        <path d="M118 30l3 6 6.5 1-5 4.2 1.4 6.5-5.9-3.4-5.9 3.4 1.4-6.5-5-4.2 6.5-1z" />
+        <path d="M138 18 l3 6 6.5 1 -5 4.2 1.4 6.5 -5.9 -3.4 -5.9 3.4 1.4 -6.5 -5 -4.2 6.5 -1 z" />
       </g>
       <g class="fx error-fx">
-        <path d="M118 28v12M124 34h-12" stroke-width="2.2" stroke-linecap="round" />
+        <path d="M138 16 v12 M144 22 h-12" stroke-width="2.2" stroke-linecap="round" />
       </g>
     </svg>
   </aside>
@@ -295,17 +346,17 @@ const title = computed(() => {
 
 <style scoped>
 .muni {
-  --mood: rgb(var(--accent-rgb));
-  --mood-soft: rgba(var(--accent-rgb), 0.35);
+  --mood: #e8c47c;
+  --mood-soft: rgba(232, 196, 124, 0.35);
   position: fixed;
   right: 16px;
   bottom: 12px;
   z-index: 40;
-  width: 118px;
+  width: 126px;
   color: var(--mood);
   pointer-events: none;
   user-select: none;
-  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.16));
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.18));
   animation: stroll 5.2s ease-in-out infinite;
 }
 .muni .ox {
@@ -328,10 +379,10 @@ const title = computed(() => {
 }
 .muni .aura {
   position: absolute;
-  left: 18%;
-  right: 18%;
-  bottom: 8px;
-  height: 18px;
+  left: 16%;
+  right: 16%;
+  bottom: 4px;
+  height: 16px;
   border-radius: 50%;
   background: radial-gradient(ellipse, var(--mood-soft), transparent 70%);
   filter: blur(6px);
@@ -339,7 +390,7 @@ const title = computed(() => {
 }
 .muni .dust {
   position: absolute;
-  bottom: 14px;
+  bottom: 12px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -348,44 +399,62 @@ const title = computed(() => {
   opacity: 0;
 }
 .muni .dust.d1 {
-  right: 26px;
+  right: 24px;
   animation: dust 0.72s ease-out infinite;
 }
 .muni .dust.d2 {
-  right: 38px;
+  right: 36px;
   animation: dust 0.72s ease-out infinite 0.36s;
 }
 
-.led,
-.joint,
-.horn-tip,
-.rim,
-.switch-ring {
+/* —— 发光元素统一走 --mood —— */
+.glow-fill,
+.glow-stroke,
+.led {
   fill: var(--mood);
-  stroke: var(--mood);
   color: var(--mood);
 }
-.rim,
-.switch-ring {
-  fill: none;
-}
-.working-fx circle,
-.success-fx path {
-  fill: var(--mood);
-}
-.error-fx path {
+.glow-stroke,
+.led {
   stroke: var(--mood);
+}
+.emblem {
+  font-family: "Muni Brush", "STKaiti", "KaiTi", serif;
+  font-weight: 700;
+  fill: #f2f9ff;
+  paint-order: stroke;
+  stroke: rgba(16, 42, 66, 0.55);
+  stroke-width: 2;
+}
+.halo {
   fill: none;
+  stroke: var(--mood-soft);
+  stroke-width: 2;
+}
+.halo.faint {
+  stroke-width: 1.4;
+  opacity: 0.55;
+}
+.halo.spin {
+  stroke-dasharray: 10 7;
+  animation: halo-spin 6s linear infinite;
+  transform-origin: 80px 130px;
 }
 .eye-glow {
   fill: var(--mood);
   opacity: 0;
 }
+.lid {
+  fill: #dcab60;
+  stroke: #5c3416;
+  stroke-width: 1.1;
+  opacity: 0;
+}
 
 /* —— 各状态色相 / 形态 —— */
 .mood-idle {
-  --mood: #c9a06a;
-  --mood-soft: rgba(201, 160, 106, 0.32);
+  --mood: #e8c47c;
+  --mood-soft: rgba(232, 196, 124, 0.35);
 }
 .mood-working {
   --mood: rgb(var(--accent-rgb));
@@ -393,41 +462,35 @@ const title = computed(() => {
   animation-duration: 3.2s;
 }
 .mood-success {
-  --mood: #d4a84b;
-  --mood-soft: rgba(212, 168, 75, 0.42);
+  --mood: #ffd873;
+  --mood-soft: rgba(255, 216, 115, 0.42);
 }
 .mood-success .wood-a {
-  stop-color: #ffe7b0;
+  stop-color: #ffe9b8;
 }
 .mood-success .wood-b {
-  stop-color: #e0b45a;
+  stop-color: #eec06a;
 }
 .mood-error {
-  --mood: #e25555;
-  --mood-soft: rgba(226, 85, 85, 0.4);
-}
-.mood-error .toggle {
-  transform: translateX(-8px);
+  --mood: #ff6b6b;
+  --mood-soft: rgba(255, 107, 107, 0.4);
 }
 .mood-curious {
   --mood: #5ec4c0;
   --mood-soft: rgba(94, 196, 192, 0.4);
 }
 .mood-curious .eye-glow {
-  opacity: 0.28;
+  opacity: 0.3;
   animation: eye-pulse 1.4s ease-in-out infinite;
 }
-.mood-curious .pupil {
+.mood-curious .iris circle:nth-of-type(2) {
   fill: #0a3d3c;
 }
 
-.lid {
-  opacity: 0;
-}
 .muni.wink .lid {
   opacity: 1;
 }
-.muni.wink .pupil,
+.muni.wink .iris,
 .muni.wink .eye-glow {
   opacity: 0;
 }
@@ -448,63 +511,61 @@ const title = computed(() => {
   opacity: 1;
   animation: mote 0.9s ease-in-out infinite;
 }
+.mood-working .working-fx circle {
+  fill: var(--mood);
+}
 .mood-success .success-fx {
   opacity: 1;
   animation: mote 1.2s ease-out infinite;
+}
+.mood-success .success-fx path {
+  fill: var(--mood);
 }
 .mood-error .error-fx {
   opacity: 1;
   animation: mote 0.7s ease-in-out infinite;
 }
+.mood-error .error-fx path {
+  stroke: var(--mood);
+  fill: none;
+}
 
-.muni .leg,
-.muni .l1,
-.muni .l1b,
-.muni .l2,
-.muni .l2b {
+.muni .leg {
   transform-box: fill-box;
   transform-origin: top center;
   animation: step 0.72s ease-in-out infinite alternate;
 }
-.muni .l2,
-.muni .l2b,
-.muni .legs.back.b .leg {
+.muni .legs.back.b .leg,
+.muni .legs.front.b .leg {
   animation-delay: 0.36s;
-}
-.muni .crate {
-  animation: sway 0.72s ease-in-out infinite alternate;
-  transform-origin: 80px 58px;
 }
 .muni .head {
   animation: head-bob 0.72s ease-in-out infinite;
-  transform-origin: 30px 70px;
+  transform-origin: 80px 66px;
 }
-.power-switch .led {
-  animation: led-pulse 1.8s ease-in-out infinite;
+.muni .banner {
+  animation: sway 0.72s ease-in-out infinite alternate;
+  transform-origin: 136px 48px;
+}
+.muni .tail {
+  animation: sway 1.1s ease-in-out infinite alternate;
+  transform-origin: 126px 82px;
 }
 .mood-working .ox,
 .mood-working .leg,
-.mood-working .l1,
-.mood-working .l1b,
-.mood-working .l2,
-.mood-working .l2b,
-.mood-working .crate,
 .mood-working .head,
+.mood-working .banner,
 .mood-working .dust.d1,
 .mood-working .dust.d2 {
   animation-duration: 0.46s;
 }
-.mood-working .l2,
-.mood-working .l2b,
 .mood-working .legs.back.b .leg,
+.mood-working .legs.front.b .leg,
 .mood-working .dust.d2 {
   animation-delay: 0.23s;
 }
-.mood-working .led {
-  animation-duration: 0.55s;
-}
-.mood-error .led {
-  animation: led-alarm 0.45s steps(2) infinite;
+.mood-error .halo.spin {
+  animation: halo-spin 1.2s linear infinite;
 }
 .mood-error .head {
   animation: shake 0.45s ease-in-out infinite;
@@ -514,9 +575,6 @@ const title = computed(() => {
 }
 .mood-success .head {
   animation: nod 0.7s ease-in-out 3;
-}
-.mood-success .horn-tip {
-  animation: mote 1.1s ease-in-out infinite;
 }
 
 @keyframes stroll {
@@ -531,18 +589,18 @@ const title = computed(() => {
 @keyframes body-bob {
   0%,
   100% {
-    transform: translateY(0) rotate(-1.2deg);
+    transform: translateY(0) rotate(-0.8deg);
   }
   50% {
-    transform: translateY(-3px) rotate(1.2deg);
+    transform: translateY(-3px) rotate(0.8deg);
   }
 }
 @keyframes step {
   from {
-    transform: rotate(-10deg);
+    transform: rotate(-7deg);
   }
   to {
-    transform: rotate(10deg);
+    transform: rotate(7deg);
   }
 }
 @keyframes sway {
@@ -559,7 +617,7 @@ const title = computed(() => {
     transform: translateY(0) rotate(0deg);
   }
   50% {
-    transform: translateY(1px) rotate(-2deg);
+    transform: translateY(1px) rotate(-1.6deg);
   }
 }
 @keyframes dust {
@@ -586,21 +644,9 @@ const title = computed(() => {
     opacity: 1;
   }
 }
-@keyframes led-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-@keyframes led-alarm {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.15;
+@keyframes halo-spin {
+  to {
+    stroke-dashoffset: -34;
   }
 }
 @keyframes aura {
@@ -647,7 +693,7 @@ const title = computed(() => {
 
 @media (max-width: 720px) {
   .muni {
-    width: 90px;
+    width: 96px;
     right: 10px;
     bottom: 8px;
   }
@@ -657,17 +703,13 @@ const title = computed(() => {
   .muni,
   .muni .ox,
   .muni .leg,
-  .muni .l1,
-  .muni .l1b,
-  .muni .l2,
-  .muni .l2b,
-  .muni .crate,
   .muni .head,
+  .muni .banner,
+  .muni .tail,
   .muni .dust,
   .muni .aura,
+  .halo.spin,
   .fx,
-  .power-switch .led,
-  .horn-tip,
   .eye-glow {
     animation: none !important;
   }

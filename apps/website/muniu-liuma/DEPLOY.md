@@ -2,11 +2,20 @@
 
 ## 地址
 
-- 官网：`http://139.196.147.134/AI/muniu-liuma/`
+- 官网（国内主站）：`http://139.196.147.134/AI/muniu-liuma/`
+- GitHub Pages：`https://cq971020745.github.io/agent-office/`（仓库 About 的 Website 链接即此处）
+
+两处同一份页面（`apps/website/muniu-liuma/`）。Pages 放不下大安装包，`deploy-site.yml` 工作流在部署时给 latest.json 注入 `downloadBase` 指向同名 GitHub Release 资产；主站不注入，下载继续走同目录 `releases/`（国内速度）。页面 JS 按 `downloadBase` 有无自动切换。
 
 （nginx `root` 为 `/var/chenqiang`，官网路径带 `/AI/`。安装包用 ASCII 文件名。）
 
 注意：本服务器 `8787` 已被 API Hub 占用；木牛流马桌面一体包内嵌服务端，不抢该端口。浏览器自建请另开端口。
+
+## GitHub Pages 发布
+
+- 工作流：`.github/workflows/deploy-site.yml`，push 到 `main` 且 `apps/website/muniu-liuma/**` 有变更时自动部署；也可 Actions 手动派发。
+- Pages 已启用为 GitHub Actions 模式（`build_type: workflow`），URL 固定为 `https://cq971020745.github.io/agent-office/`。
+- 官网内容改动请合并到 `main`（或先把官网目录落在 `main`），特性分支不触发自动部署。
 
 ## 目录结构
 

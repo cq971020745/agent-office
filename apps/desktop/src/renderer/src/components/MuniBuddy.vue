@@ -143,6 +143,7 @@ const title = computed(() => {
   width: 150px;
   pointer-events: none;
   user-select: none;
+  animation: stroll 5.2s ease-in-out infinite;
 }
 .muni .cart {
   position: relative;
@@ -158,6 +159,9 @@ const title = computed(() => {
 }
 .muni.dragging .cart {
   cursor: grabbing;
+}
+.muni.dragging .cart,
+.muni.dragging {
   animation-play-state: paused;
 }
 .muni .aura {
@@ -198,6 +202,7 @@ const title = computed(() => {
 .mood-working {
   --mood: rgb(var(--accent-rgb));
   --mood-soft: rgba(var(--accent-rgb), 0.4);
+  animation-duration: 3.2s;
 }
 .mood-working .cart {
   animation-duration: 1.6s;
@@ -225,10 +230,19 @@ const title = computed(() => {
 @keyframes bob {
   0%,
   100% {
-    transform: translateY(0);
+    transform: translateY(0) rotate(-0.6deg);
   }
   50% {
-    transform: translateY(-3px);
+    transform: translateY(-2.5px) rotate(0.6deg);
+  }
+}
+@keyframes stroll {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-22px);
   }
 }
 @keyframes dust {
@@ -265,6 +279,7 @@ const title = computed(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .muni,
   .muni .cart,
   .muni .dust,
   .muni .aura {

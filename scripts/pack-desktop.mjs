@@ -40,14 +40,21 @@ if (!fs.existsSync(stageServer)) {
 }
 
 const desktopRequire = createRequire(path.join(desktop, "package.json"));
-const electronDist = path.dirname(desktopRequire("electron"));
+let electronDist;
+try {
+  const executable = desktopRequire("electron");
+  if (fs.existsSync(executable)) electronDist = path.dirname(executable);
+} catch {
+  // pnpm 的新检出可能未运行 Electron 下载脚本；交给 builder 下载锁定版本。
+}
 const packTemp = path.join(root, "dist", "cache", "native-tmp");
 fs.mkdirSync(packTemp, { recursive: true });
-console.log("[pack] electron-builder using installed Electron:", electronDist);
+console.log(electronDist ? `[pack] using installed Electron: ${electronDist}` : "[pack] electron-builder will download Electron");
 execFileSync(process.execPath, [
   desktopRequire.resolve("electron-builder/cli.js"),
   ...(builderFlags ? [builderFlags] : []),
-  "--publish", "never", `--config.electronDist=${electronDist}`,
+  "--publish", "never",
+  ...(electronDist ? [`--config.electronDist=${electronDist}`] : []),
 ], {
   cwd: desktop,
   stdio: "inherit",

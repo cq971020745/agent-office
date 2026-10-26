@@ -2,6 +2,8 @@
 
 核对日期：2026-10-26。包管理器版本、脚本和依赖以仓库 `package.json` 为准。
 
+本项目已新增独立的云端业务服务部署，实际入口、systemd 服务、nginx 路由和数据目录见 [0.1.5 部署记录](deployment-0.1.5.md)。官网与业务控制台不是同一页面。
+
 ## 本地开发与网页入口
 
 在仓库根执行 `pnpm install --frozen-lockfile`。终端一运行 `pnpm dev:server`；终端二运行 `pnpm dev:desktop`。API 为 `http://127.0.0.1:38617`，开发渲染层为 `http://localhost:38618`。不要启动多个服务进程共用同一数据目录；看到 EADDRINUSE 时先确认占用者是否为本项目。

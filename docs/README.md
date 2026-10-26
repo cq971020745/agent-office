@@ -8,6 +8,7 @@
 | 执行架构、资源归属、数据表和插件边界 | [当前架构](design.md) |
 | 插件启停、记忆和皮肤 API 接入 | [集成说明](integration-guide.md) |
 | 已完成、验证结果、已知限制和交接 | [交接状态](handoff.md) |
+| 0.1.5 云端部署入口、目录与回滚 | [部署记录](deployment-0.1.5.md) |
 | 候选功能与 UI 改进，尚未承诺实施 | [产品与 UI 待办](product-roadmap.md) |
 | 领域用语、AI 改代码必须遵守的规则 | [CONTEXT](../CONTEXT.md)、[AGENTS](../AGENTS.md) |
 | 迭代历史与架构取舍 | [CHANGELOG](../CHANGELOG.md)、[ADR](adr/) |

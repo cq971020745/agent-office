@@ -34,19 +34,21 @@
 
 ## 发新版本（2026-10-19 v0.1.1 起的流程）
 
-1. `apps/desktop/package.json` 升版本号；`apps/website/muniu-liuma/latest.json` 同步版本、日期、文件名与 GitHub Release 链接（`index.html` 的版本号和下载链接由 JS 从 latest.json 动态改写，不用改 HTML）。
+1. `apps/desktop/package.json` 升版本号；先保留线上 `latest.json` 的旧版本，避免自动 Pages 部署提前切换下载链接。
 2. 提交并推送分支（mac 包由 GitHub Actions 从 git 构建）。
-3. 触发 `Pack macOS` 工作流一次：`gh workflow run pack-mac.yml --ref <分支> -f arch=arm64 -f release_tag=vX.Y.Z`。**一次运行就出 arm64 + x64 两份 dmg**——`electron-builder.yml` 的 mac target 声明了双架构，CLI 的 arch 参数与它取并集；不要派发两次（工作流 concurrency 同 ref 互杀，后跑的会取消先跑的）。
-4. Windows 本机打包：`pnpm pack:win`，产物在 `apps/desktop/release/木牛流马-<版本>-win-x64-Setup.exe`，拷贝为 ASCII 名 `Muni-<版本>-win-x64-Setup.exe`。
-5. `gh release upload vX.Y.Z Muni-*` 补传 Windows 包（dmg 由工作流自动发布到该 Release）。
-6. scp 三个安装包到 `releases/<版本>/`，**最后**传 latest.json（避免页面先指向不存在的文件）。
+3. 触发 `Pack macOS` 一次：`gh workflow run pack-mac.yml --ref <分支> -f arch=universal -f release_tag=vX.Y.Z`。矩阵分别使用 `macos-15` ARM 和 `macos-15-intel` 原生构建，对应 Node/Python/SQLite 必须与目标架构一致；`arm64` 或 `x64` 参数只构建该架构。安装包先进入草稿 Release。
+4. Windows 推荐运行 `gh workflow run pack-win.yml --ref <分支> -f release_tag=vX.Y.Z`，固定 Windows 2022 镜像，打包后检查包内原生数据库并上传草稿。也可本机 `pnpm pack:win`，输出在 `apps/desktop/release/`；正式分发统一使用 ASCII 名 `Muni-<版本>-win-x64-Setup.exe`。
+5. 核对 Windows 与两种 Mac 包、文件大小和 SHA-256 后，公开草稿 Release；本机生成的包可用 `gh release upload` 补传，不能只凭“构建成功”认定运行通过。
+6. 三个安装包上传到 `releases/<版本>/` 的 `.uploading` 临时文件，核对 SHA-256 后原子改名；**最后**更新 `latest.json` 的版本、日期、文件名和 Release 链接，上传国内站并提交到 main 触发 Pages（避免页面先指向不存在的文件）。
 7. HTTP 验证：latest.json 返回新版本，三个下载链接 200 且 Content-Length 与本地一致。
+
+业务系统与官网是两个入口；服务器目录、服务名、代理和回滚位置见 [0.1.5 部署记录](../../../docs/deployment-0.1.5.md)。发布包和官网版本切换不代表企业知识库代理已恢复。
 
 ## 踩坑（2026-10-19 实录）
 
-- **GNU tar 把盘符当主机名**：Git Bash 里 `tar -czf "D:\...\x.tgz"` 报 `Cannot connect to D:`。`scripts/stage-server.mjs` 已改为相对路径（cwd 定位）调 tar；新写打包脚本时同样遵守。
+- **GNU tar 把盘符当主机名**：Git Bash 里 `tar -czf "D:\...\x.tgz"` 报 `Cannot connect to D:`。当前 `scripts/stage-server.mjs` 使用 Node tar 库打包；包内运行时仍用系统 tar 解压，Windows CI 必须通过原生解压验证。
 - **工作流表达式语法**：`${{ inputs.tag#v }}` 不是合法表达式，派发时 GitHub 直接 422。剥 `v` 前缀经 `env:` 传给 shell 做。
-- **别中途取消正在发布的构建**：electron-builder 在 CI 里会隐式直传 GitHub Release，先删同名旧资产再上传；取消落在中间会让 Release 资产被清空（需重跑一次恢复）。
+- **别中途取消正在上传资产的构建**：当前脚本给 electron-builder 显式传 `--publish never`，由工作流的 Release 步骤上传草稿。覆盖同名资产时仍可能先删后传，取消会留下缺失资产；先确认上传完成再公开草稿。
 - **服务器磁盘**：`/dev/vda3` 约 40G。每版三件套约 750MB；确认新版可用后清理旧 `releases/<旧版本>/`。
 
 ## Mac「已损坏」

@@ -41,6 +41,8 @@ if (!fs.existsSync(stageServer)) {
 
 const desktopRequire = createRequire(path.join(desktop, "package.json"));
 const electronDist = path.dirname(desktopRequire("electron"));
+const packTemp = path.join(root, "dist", "cache", "native-tmp");
+fs.mkdirSync(packTemp, { recursive: true });
 console.log("[pack] electron-builder using installed Electron:", electronDist);
 execFileSync(process.execPath, [
   desktopRequire.resolve("electron-builder/cli.js"),
@@ -51,6 +53,9 @@ execFileSync(process.execPath, [
   stdio: "inherit",
   env: {
     ...process.env,
+    TEMP: packTemp,
+    TMP: packTemp,
+    TMPDIR: packTemp,
     npm_config_user_agent: process.env.npm_config_user_agent || `pnpm/${JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).packageManager.split("@")[1]}`,
     ELECTRON_CACHE: path.join(root, "dist", "cache", "electron"),
     ELECTRON_BUILDER_CACHE: path.join(root, "dist", "cache", "electron-builder"),

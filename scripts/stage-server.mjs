@@ -3,7 +3,7 @@
  * - server/：dist + 用 npm 安装的生产依赖（无 pnpm junction，便于 electron-builder 复制）
  * - pi-packages/、skills-catalog/、agent-packs/：随包资源
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +61,9 @@ function pruneStageDeps(depsDir) {
 
   // Node 服务只用 onnxruntime-node；transformers.node 不依赖独立的 onnxruntime-web 包
   drop("onnxruntime-web");
+  // 此依赖测试夹具含雪人字符的空文件，Windows 系统 tar 无法解码其 PAX 路径。
+  // 只移除已确认不被运行时读取的测试目录，不全树删除 doc/docs。
+  drop(path.join("@fastify", "send", "test"));
 
   // onnxruntime-node 自带 darwin/linux/win 三套，只留当前平台
   const ortRoot = path.join(depsDir, "onnxruntime-node", "bin", "napi-v6");
@@ -357,6 +360,19 @@ function stagePython() {
   fs.mkdirSync(pyCache, { recursive: true });
   const tgz = path.join(pyCache, `python-runtime-${pbsTarget()}.tar.gz`);
   if (!fs.existsSync(tgz)) {
+    // 可复用前一次本平台构建的同版本 Python，避免离线重打包再次访问 GitHub。
+    const previousPython = path.join(root, "apps", "desktop", "release", "win-unpacked", "resources", "python");
+    const previousMarker = path.join(previousPython, ".wps-staged-ok");
+    if (process.platform === "win32" && fs.existsSync(previousMarker) && fs.readFileSync(previousMarker, "utf8").trim() === PBS_PYTHON) {
+      try {
+        execFileSync(path.join(previousPython, "python.exe"), ["-c", "import sys, requests, Crypto; assert sys.version_info[:3] == (3, 11, 7)"], { stdio: "pipe", windowsHide: true });
+        copyDir(previousPython, pyDir);
+        console.log("[stage] reused validated bundled Python from previous Windows build");
+        return;
+      } catch {
+        // 损坏或版本不符的旧构建不能充当缓存，继续标准下载路径。
+      }
+    }
     console.log(`[stage] download python runtime: ${url}`);
     execSync(`curl -sSL --fail --retry 3 -o python-runtime.tar.gz "${url}"`, { cwd: pyCache, stdio: "inherit" });
     fs.renameSync(path.join(pyCache, "python-runtime.tar.gz"), tgz);

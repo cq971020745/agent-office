@@ -1,4 +1,4 @@
-# 澄台（CHENG）
+# 木牛流马（Muni）
 
 领域术语以 [CONTEXT.md](CONTEXT.md) 为准，已确认的取舍以 [docs/adr/](docs/adr/) 为准。这里只写下次改代码时必须遵守的边界。
 
@@ -37,11 +37,26 @@
 - `custom_workspace` 仅在用户显式选择工作目录时为 1。不要把专家常驻目录或平台隔离区标成侧栏「项目」。
 - 文档解析产物只写 `.parsed/`。不要 rename / move / overwrite 用户上传原件。
 - 追问切换模型走 `PATCH /tasks/:id/model` 并 `invalidateSession`；仍只用当前用户自己启用的供应商/模型。
+- 自选目录校验复用 `workspace-boundary.ts`；删除平台工作区必须严格在根内，不得删除根目录。路径校验不等于宿主进程的安全沙箱。
+
+## 平台插件与长期记忆
+
+- 平台插件在 `plugins/index.ts` 显式注册；注册时不写库，核心迁移后再初始化。插件停用的业务入口返回 503，不加载用户提供的服务端 JS。
+- `platform_plugins` 保存实例级启停；`memories` 必须按 `user_id` 隔离。记忆是参考资料，不得覆盖用户指令或工具策略；自动沉淀仅在 `MEMORY_AUTO_CAPTURE=1` 且轮次成功时开启。
+- 插件工具在建会话时装配；停用不保证撤销缓存会话，不要把“新会话生效”写成“所有运行任务立刻移除”。
 
 ## 桌面预览与标注
 
 - 内嵌 `<webview>` 不要开 `allowpopups`（guest 弹窗会变成空白窗）。页面截图走主进程 `captureWebContents`。
 - 对话/预览里的工作区图片走 `GET /tasks/:id/workspace/file`：按扩展名设 `image/*`，`Content-Disposition: inline`。MIME 错误或接口 500 都会让气泡 `<img>` 裂图。
+
+## 桌面皮肤包
+
+- 皮肤包只支持 CSS + 静态资源（`skin.json` + `skin.css` + `assets/`），**不加载第三方 JS**，不要给渲染层加脚本类皮肤能力或放开 CSP `script-src`。
+- 主题变量写在 `<style id="runtime-theme">`（不要再改回 html 内联样式，内联会让皮肤层无法覆盖）；皮肤层 `<style data-skin-style>` 必须排在它之后，`useTheme.ensureRuntimeStyleTag` 已处理该顺序，动级联前先看 [docs/adr/0011-skin-packs-css-only.md](docs/adr/0011-skin-packs-css-only.md)。
+- 皮肤文件在 `{DATA_DIR}/skins/`（内置包经 `SKIN_PACKS_DIR` 同步、登记 `builtins.json`，不可覆盖删除）。`/skins/:id/file` 要保持包内路径封禁与 `?token=` 直连能力（CSS `url()` 请求不带 Authorization 头）。
+- 皮肤市场是平台插件（`plugins/skin-market.ts`，`/skins-market`）：列表/上传/下载对全体登录用户开放、无令牌；管理员停用后市场入口 503。客户端「上传 zip」走市场通道。
+- 开发文档在 [skin-packs/README.md](skin-packs/README.md)。
 
 ## Pi 插件与对外客户端
 
@@ -52,3 +67,9 @@
 ## 端口
 
 - 服务端默认 `38617`、桌面 dev 渲染层 `38618`，是刻意选的冷门端口（服务端仍可用 `PORT` 覆盖），不要改回主流默认值。改端口时四处同步：`apps/server/src/config.ts`、`apps/desktop/src/main/server-host.ts`、`apps/desktop/src/renderer/src/api.ts`、`apps/desktop/src/renderer/index.html` 的 CSP。取舍见 [docs/adr/0010-cold-default-ports.md](docs/adr/0010-cold-default-ports.md)。
+
+## 运行与文档入口
+
+- 服务端 `HOST` 默认回环；LAN/容器显式设置。`DATA_DIR` 相对服务进程工作目录，`pnpm dev:server` 默认是 `apps/server/data/`。备份含密钥的数据目录不得入 Git。
+- 全项目结构与数据表见 [docs/design.md](docs/design.md)，环境变量和排障见 [docs/runbook.md](docs/runbook.md)，新增插件接口见 [docs/integration-guide.md](docs/integration-guide.md)。
+- 根 `DESIGN.md` / `REQUIREMENT.md` 仅属于插件与记忆改造；历史评审不是当前待办，当前交接见 [docs/handoff.md](docs/handoff.md)。

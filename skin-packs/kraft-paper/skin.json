@@ -1,0 +1,8 @@
+{
+  "id": "kraft-paper",
+  "name": "牛皮纸 · 木牛",
+  "version": "1.0.0",
+  "author": "澄台官方",
+  "description": "暖纸色手作感皮肤：牛皮纸浅色与咖啡深色两档，直角硬朗化，附细纸纹底。兼作皮肤包开发模板。",
+  "modes": ["light", "dark"]
+}

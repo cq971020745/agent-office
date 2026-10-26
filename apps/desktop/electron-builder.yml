@@ -21,6 +21,8 @@ extraResources:
     to: skills-catalog
   - from: ../../dist/stage/agent-packs
     to: agent-packs
+  - from: ../../dist/stage/skin-packs
+    to: skin-packs
   - from: ../../dist/stage/python
     to: python
 # Windows 未开开发者模式时，winCodeSign 解压 darwin 符号链接会失败；一体包不做代码签名

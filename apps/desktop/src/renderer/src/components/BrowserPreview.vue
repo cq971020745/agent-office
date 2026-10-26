@@ -307,7 +307,9 @@ async function captureActivePage(): Promise<File | undefined> {
     if (id && window.agentOffice?.captureWebContents) {
       const res = await window.agentOffice.captureWebContents(id);
       if (res.ok && res.png?.byteLength) {
-        return new File([res.png], `annotate-${Date.now()}.png`, { type: "image/png" });
+        // IPC 传回的 Uint8Array 底层是 ArrayBufferLike，BlobPart 需要确切的 ArrayBuffer
+        const bytes = new Uint8Array(res.png);
+        return new File([bytes.buffer as ArrayBuffer], `annotate-${Date.now()}.png`, { type: "image/png" });
       }
     }
   } catch {
@@ -508,7 +510,7 @@ onBeforeUnmount(() => {
         <webview
           v-for="t in tabs"
           :key="t.id"
-          :ref="(el) => setWebviewRef(t.id, el)"
+          :ref="(el: unknown) => setWebviewRef(t.id, el)"
           class="wv"
           :class="{ hidden: t.id !== activeTabId }"
           webpreferences="contextIsolation=yes, nodeIntegration=no, javascript=yes"

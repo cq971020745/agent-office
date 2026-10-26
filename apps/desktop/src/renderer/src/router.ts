@@ -6,6 +6,8 @@ import ExpertsView from "./views/ExpertsView.vue";
 import HomeView from "./views/HomeView.vue";
 import KnowledgeView from "./views/KnowledgeView.vue";
 import LoginView from "./views/LoginView.vue";
+import MemoryView from "./views/MemoryView.vue";
+import PluginsView from "./views/PluginsView.vue";
 import ProjectFilesView from "./views/ProjectFilesView.vue";
 import TasksView from "./views/TasksView.vue";
 import TaskDetailView from "./views/TaskDetailView.vue";
@@ -23,11 +25,13 @@ export const router = createRouter({
     { path: "/kb", component: KnowledgeView },
     { path: "/models", component: AdminView },
     { path: "/admin", component: AdminView },
+    { path: "/plugins", component: PluginsView },
+    { path: "/memory", component: MemoryView },
   ],
 });
 
 router.beforeEach((to) => {
   if (to.path === "/login") return getToken() ? "/" : undefined;
   if (!getToken()) return "/login";
-  if (to.path === "/admin" && getRole() !== "admin") return "/";
+  if ((to.path === "/admin" || to.path === "/plugins") && getRole() !== "admin") return "/";
 });

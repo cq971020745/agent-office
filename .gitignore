@@ -8,6 +8,7 @@ data/
 __pycache__/
 *.pyc
 .ui-shots/
+.zcode/
 .playwright-cli/
 **/.playwright-cli/
 *.tsbuildinfo

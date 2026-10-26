@@ -11,17 +11,11 @@ import { ensureDefaultAgent, migrate } from "./db.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerProjectRoutes } from "./routes/projects.js";
+import { registerSkinRoutes, syncBuiltinSkinPacks } from "./routes/skins.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
-import { registerVoiceRoutes } from "./routes/voice.js";
-import { registerKbEmbedRoutes } from "./kb-embed.js";
-import { startKbSessionKeeper } from "./kb-session.js";
-import { registerWpsRoutes, warmDirectoryCache } from "./routes/wps.js";
-import { ensureExternalPiPackages, installPiPackages } from "./packages.js";
 import { registerLenientJsonParser } from "./json-body.js";
 import { startSessionSweeper, sweepOrphanTasks } from "./runner.js";
-import { registerScheduleRoutes, startScheduler } from "./scheduler.js";
-import { installSkillFromSource } from "./skill-install.js";
-import { ensureSeedSkills } from "./skills.js";
+import { platformPlugins } from "./plugins/index.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -38,42 +32,14 @@ async function main(): Promise<void> {
   ensureDirs();
   migrate();
   ensureDefaultAgent();
+  syncBuiltinSkinPacks();
   sweepOrphanTasks();
-  ensureSeedSkills();
-  // 随仓库内置的技能：已存在则跳过，不覆盖用户改动
-  for (const skillId of ["wps365-skill", "document-ocr", "skill-creator"] as const) {
-    try {
-      const outcome = await installSkillFromSource(skillId);
-      console.log(`[skills] 内置技能已就绪：${outcome.names.join("、")}（来源 ${outcome.source}）`);
-    } catch (err) {
-      const msg = String((err as Error).message ?? err);
-      if (msg.includes("已存在")) {
-        console.log(`[skills] 内置技能 ${skillId} 已安装，跳过`);
-      } else {
-        console.warn(`[skills] 内置技能 ${skillId} 自动安装失败：${msg}`);
-      }
-    }
-  }
-  const piPackages = installPiPackages();
-  for (const { id, dest, alreadySynced } of piPackages.installed) {
-    console.log(`[packages] pi 插件包 ${id} 就绪（${alreadySynced ? "已是最新" : "已更新"}）：${dest}`);
-  }
-  for (const id of piPackages.skipped) {
-    console.warn(`[packages] 跳过 pi 插件包 ${id}：仓库内未找到包模板（PI_PACKAGES_DIR 未指向仓库根？）`);
-  }
-  const external = await ensureExternalPiPackages();
-  for (const source of external.ready) {
-    console.log(`[packages] ${source} 已就绪`);
-  }
-  for (const { source, error } of external.failed) {
-    console.warn(`[packages] ${source} 安装失败：${error}`);
-  }
   startSessionSweeper();
-  startScheduler();
-  startKbSessionKeeper();
-  warmDirectoryCache();
 
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    // 访问日志抹掉 query（?token= 的 SSE/下载/皮肤直连会进完整 URL，评审 P1）
+    logger: { redact: { paths: ["req.url"], censor: (value) => String(value).split("?")[0] ?? String(value) } },
+  });
   registerLenientJsonParser(app);
   // methods 必须显式声明：@fastify/cors 默认只放行 GET,HEAD,POST，
   // 缺省时桌面端所有 DELETE/PUT/PATCH 请求会因预检失败而报 Failed to fetch
@@ -81,7 +47,8 @@ async function main(): Promise<void> {
     origin: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
-  await app.register(jwt, { secret: config.jwtSecret });
+  // 令牌默认 7 天过期（评审 P1：此前永不过期）；桌面端过期后走既有的 401 → 重新登录流程
+  await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: "7d" } });
   // 附件上传：单文件 20MB、单任务最多 10 个附件
   await app.register(multipart, {
     limits: { fileSize: 20 * 1024 * 1024, files: 10 },
@@ -95,20 +62,19 @@ async function main(): Promise<void> {
     }
   });
 
+  await platformPlugins.initialize(app);
+
   registerAuthRoutes(app);
-  await registerKbEmbedRoutes(app);
   registerAdminRoutes(app);
   registerTaskRoutes(app);
   registerProjectRoutes(app);
-  registerScheduleRoutes(app);
-  registerVoiceRoutes(app);
-  registerWpsRoutes(app);
+  registerSkinRoutes(app);
 
   // 同机浏览器访问时直接托管桌面端的渲染层构建；目录不存在（如 Docker 镜像）则跳过。
   const webDist = process.env.WEB_DIST ?? path.resolve(process.cwd(), "../desktop/out/renderer");
   if (fs.existsSync(path.join(webDist, "index.html"))) {
     await app.register(fastifyStatic, { root: webDist });
-    const apiPrefixes = ["/auth", "/admin", "/agents", "/tasks", "/projects", "/schedules", "/skills", "/voice", "/wps", "/kb-embed", "/new-general-rag-kb"];
+    const apiPrefixes = ["/auth", "/admin", "/plugins", "/memory", "/agents", "/tasks", "/projects", "/schedules", "/skills", "/skins", "/skins-market", "/voice", "/wps", "/kb-embed", "/new-general-rag-kb"];
     app.setNotFoundHandler((req, reply) => {
       const url = req.raw.url ?? "";
       // 裸 /admin 是管理页入口；管理 API 全部带子路径（/admin/providers 等）
@@ -126,7 +92,7 @@ async function main(): Promise<void> {
     process.on(signal, () => void app.close());
   }
 
-  await app.listen({ port: config.port, host: "0.0.0.0" });
+  await app.listen({ port: config.port, host: config.host });
 }
 
 main().catch((err) => {

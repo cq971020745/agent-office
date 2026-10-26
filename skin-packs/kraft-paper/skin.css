@@ -1,0 +1,68 @@
+/* 牛皮纸 · 木牛 —— 皮肤包示例（兼作开发模板）
+ *
+ * 规则：
+ * - 只写要覆盖的令牌，其余沿用主题系统（浅色/深色/玻璃 + 主色 + 深浅仍可正常调节）；
+ * - 深色档用 :root[data-theme="dark"] 分档覆盖；皮肤样式层排在主题层之后，同特异性直接生效；
+ * - 相对 url()（如 assets/paper.svg）由客户端自动改写为服务端文件接口，无需关心路径；
+ * - 本皮肤不写任何脚本，皮肤包约定 CSS + 资源 ONLY（docs/adr/0011）。
+ */
+
+:root {
+  /* 暖纸底色与手作边框 */
+  --bg: #f6efdf;
+  --surface: #fbf6ea;
+  --surface-2: #f0e7d2;
+  --sidebar-bg: #f1e8d3;
+  --border: #e3d7bd;
+  --border-strong: #d3c3a1;
+  --border-faint: #ece2cc;
+  --text: #33291c;
+  --text-2: #6b5a41;
+  --text-3: #8a795e;
+  /* 主色换成皮革棕（覆盖主题面板的主色选择） */
+  --accent: #b45309;
+  --accent-strong: #92400e;
+  --accent-soft: rgba(180, 83, 9, 0.12);
+  --accent-border: rgba(180, 83, 9, 0.3);
+  --accent-rgb: 180, 83, 9;
+  --accent-base: #b45309;
+  /* 直角硬朗：手作牛皮纸感 */
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
+  --code-bg: #2d2417;
+  --term-bg: #241c11;
+}
+
+/* 深色档：咖啡褐 */
+:root[data-theme="dark"] {
+  --bg: #171310;
+  --surface: #201a14;
+  --surface-2: #2a221a;
+  --sidebar-bg: #1b1611;
+  --border: #382e22;
+  --border-strong: #4c3f2f;
+  --border-faint: #2c241b;
+  --text: #efe7d8;
+  --text-2: #bfae93;
+  --text-3: #97876c;
+  --accent: #d97706;
+  --accent-strong: #f59e0b;
+  --accent-soft: rgba(217, 119, 6, 0.16);
+  --accent-border: rgba(217, 119, 6, 0.38);
+  --accent-rgb: 217, 119, 6;
+  --accent-base: #b45309;
+  --code-bg: #12100c;
+  --term-bg: #0d0b08;
+}
+
+/* 细纸纹底图（assets/ 相对路径会被改写为服务端地址）。
+ * 客户端会设置 html[data-skin="<id>"]，皮肤可用它圈住自己的装饰规则。 */
+:root[data-skin="kraft-paper"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: url(assets/paper.svg) repeat;
+  pointer-events: none;
+  z-index: 0;
+}

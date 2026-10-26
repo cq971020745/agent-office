@@ -39,6 +39,27 @@ const EXTERNAL_PACKAGES: readonly PiPackageDeclaration[] = [
   { source: "npm:@zhushanwen/pi-smart-context@0.3.9" },
 ];
 
+/** Remove only declarations managed by this platform plugin; user-installed Pi packages remain. */
+export function disableManagedPiPackages(): void {
+  const settingsPath = path.join(paths.agentDir, "settings.json");
+  if (!fs.existsSync(settingsPath)) return;
+  let settings: { packages?: Array<Record<string, unknown>>; [key: string]: unknown };
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as typeof settings;
+  } catch {
+    return;
+  }
+  const managed = new Set([
+    ...BUILTIN_PACKAGES.map(({ dirName }) => `./packages/${dirName}`),
+    ...EXTERNAL_PACKAGES.map((spec) => spec.source),
+  ]);
+  const packages = Array.isArray(settings.packages) ? settings.packages : [];
+  const remaining = packages.filter((pkg) => !managed.has(String(pkg?.source ?? "")));
+  if (remaining.length === packages.length) return;
+  settings.packages = remaining;
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
+
 export interface PiPackageDeclaration {
   source: string;
   extensions?: string[];
@@ -76,8 +97,8 @@ function listFiles(root: string, prefix = ""): Map<string, Buffer> {
 }
 
 /** 目标目录与源内容完全一致时返回 true（缺文件、多文件或内容不同都算不同步）。 */
-export function isPackageSynced(source: string, dest: string): boolean {
-  if (!fs.existsSync(path.join(dest, "package.json"))) return false;
+export function isPackageSynced(source: string, dest: string, sentinel = "package.json"): boolean {
+  if (!fs.existsSync(path.join(dest, sentinel))) return false;
   const src = listFiles(source);
   const dst = listFiles(dest);
   if (src.size !== dst.size) return false;
@@ -126,7 +147,11 @@ export function declarePiPackage(settingsPath: string, spec: string | PiPackageD
   }
 }
 
-function copyDirSync(from: string, to: string): void {
+/**
+ * 递归复制目录。刻意不用 fs.cpSync：本环境（Node 22 / Windows）下对含原生模块
+ * 与链接的 pi 包目录树复制会触发 0xC0000005 崩溃，手写循环是验证过的安全路径。
+ */
+export function copyDirSync(from: string, to: string): void {
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
     const src = path.join(from, entry.name);
     const dst = path.join(to, entry.name);
@@ -137,6 +162,15 @@ function copyDirSync(from: string, to: string): void {
       fs.copyFileSync(src, dst);
     }
   }
+}
+
+/** 把目录内容差异同步到目标（缺文件、多文件或内容不同都算不同步），返回是否发生复制。 */
+export function syncDirIfChanged(source: string, dest: string, sentinel = "package.json"): boolean {
+  if (isPackageSynced(source, dest, sentinel)) return false;
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(dest, { recursive: true });
+  copyDirSync(source, dest);
+  return true;
 }
 
 export interface InstallResult {

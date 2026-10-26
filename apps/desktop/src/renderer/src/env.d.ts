@@ -21,6 +21,9 @@ interface AgentOfficeBridge {
   captureWebContents: (
     webContentsId: number
   ) => Promise<{ ok: boolean; png?: Uint8Array; message?: string }>;
+  /** 中心服务端地址（userData/server-config.json）；远程模式不再启动本机服务端 */
+  getServerConfig: () => Promise<{ baseUrl: string | null }>;
+  setServerConfig: (baseUrl: string) => Promise<{ ok: boolean; message?: string }>;
 }
 
 interface Window {

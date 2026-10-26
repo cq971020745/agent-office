@@ -15,6 +15,7 @@ const username = ref("");
 const password = ref("");
 const showPassword = ref(false);
 const remember = ref(true);
+
 const code = ref("");
 const captchaUuid = ref("");
 const captchaImg = ref("");
@@ -204,6 +205,7 @@ const FEATURES = [
         <button class="primary" type="submit" :disabled="busy">登 录</button>
         <p v-if="error" class="error">{{ error }}</p>
       </form>
+
     </main>
   </div>
 </template>

@@ -15,4 +15,9 @@ contextBridge.exposeInMainWorld("agentOffice", {
     webContentsId: number
   ): Promise<{ ok: boolean; png?: Uint8Array; message?: string }> =>
     ipcRenderer.invoke("agent-office:capture-webcontents", webContentsId),
+  /** 中心服务端地址（userData/server-config.json；远程模式重启后不再启动本机服务端） */
+  getServerConfig: (): Promise<{ baseUrl: string | null }> =>
+    ipcRenderer.invoke("agent-office:get-server-config"),
+  setServerConfig: (baseUrl: string): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke("agent-office:set-server-config", baseUrl),
 });

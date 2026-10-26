@@ -249,7 +249,10 @@ export function tickDueSchedules(nowDate: Date = new Date()): string[] {
 }
 
 /** 启动后台定时任务轮询器（每 30 秒扫描一次到期任务） */
+let schedulerTimer: NodeJS.Timeout | null = null;
+
 export function startScheduler(): void {
+  if (schedulerTimer) return;
   const timer = setInterval(() => {
     try {
       tickDueSchedules();
@@ -258,6 +261,13 @@ export function startScheduler(): void {
     }
   }, 30_000);
   timer.unref();
+  schedulerTimer = timer;
+}
+
+export function stopScheduler(): void {
+  if (!schedulerTimer) return;
+  clearInterval(schedulerTimer);
+  schedulerTimer = null;
 }
 
 export function registerScheduleRoutes(app: FastifyInstance): void {
@@ -362,6 +372,24 @@ export function registerScheduleRoutes(app: FastifyInstance): void {
     const scheduleExpr = body.scheduleExpr !== undefined ? body.scheduleExpr.trim() : existing.schedule_expr;
     if (!parseScheduleExpr(scheduleExpr)) {
       return reply.code(400).send({ error: "非法的定时周期格式" });
+    }
+    // 评审 P1：PATCH 换模型与创建同样要做归属校验，否则可把定时任务挂到别人的供应商上，
+    // 触发时按库里的 provider_id 以该用户身份调用
+    if (providerId || modelId) {
+      if (!providerId || !modelId) return reply.code(400).send({ error: "providerId 与 modelId 需同时提供" });
+      const owned = db
+        .prepare("SELECT enabled, enabled_models FROM model_providers WHERE id = ? AND user_id = ?")
+        .get(providerId, user.id) as { enabled: number; enabled_models: string } | undefined;
+      if (!owned || !owned.enabled) return reply.code(400).send({ error: "模型供应商不可用" });
+      let models: unknown = [];
+      try {
+        models = JSON.parse(owned.enabled_models);
+      } catch {
+        models = [];
+      }
+      if (!Array.isArray(models) || !models.includes(modelId)) {
+        return reply.code(400).send({ error: "模型不在该供应商的可用列表中" });
+      }
     }
     const enabled = body.enabled !== undefined ? body.enabled : !!existing.enabled;
     const nextRunAt = enabled ? computeNextRunAt(scheduleExpr) : null;

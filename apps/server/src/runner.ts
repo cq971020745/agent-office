@@ -22,17 +22,14 @@ import { isPlatformWorkspace, paths } from "./config.js";
 import { db, now, uuid } from "./db.js";
 import { createHostTerminalTool } from "./host-terminal.js";
 import { readAgentsMd } from "./instructions.js";
-import { knowledgeTools } from "./knowledge-tools.js";
-import { getMcpTools } from "./mcp.js";
 import { parseModelOverrides, resolveModelCaps } from "./model-caps.js";
 import { isSafePlanCommand, PLAN_MODE_INSTRUCTION } from "./plan-mode.js";
-import { skillScriptTool } from "./skill-scripts.js";
-import { agentUsesSkill, buildSkillsPrompt, expandSkillSlash, readSkillTool, writeSkillTool } from "./skills.js";
+import { buildSkillsPrompt, expandSkillSlash } from "./skills.js";
 import { publishContext, publishPi, publishStatus, publishUser } from "./sse.js";
 import { cancelToolApproval, hasSessionGrant, requestToolApproval } from "./tool-approval.js";
 import { parseAccessMode, parseToolPolicy, PLAN_BLOCKED_TOOLS, policyFor, toolNeedsApproval } from "./tool-policy.js";
-import { writeTaskOcrRuntime } from "./ocr-runtime.js";
-import { workspaceTools } from "./tools.js";
+import { platformPlugins } from "./plugins/index.js";
+import { workspaceCoreTools } from "./tools.js";
 import {
   createdAtAfter,
   mergePartial,
@@ -531,7 +528,7 @@ function buildDelegateTool(parentRow: TaskJoinRow): ToolDefinition<typeof Delega
 
       const { runtime, model } = await buildRuntimeAndModel(prov, modelId);
       const codeExecAvailable = await hasCodeExec();
-      const skillsPrompt = buildSkillsPrompt(target.id);
+      const skillsPrompt = platformPlugins.isPluginActive("skills") ? buildSkillsPrompt(target.id) : "";
       const basePreamble = buildPreamble(
     !isPlatformWorkspace(parentRow.workspace_path),
     codeExecAvailable,
@@ -554,22 +551,15 @@ function buildDelegateTool(parentRow: TaskJoinRow): ToolDefinition<typeof Delega
       await loader.reload();
 
       const subSessionManager = SessionManager.create(parentRow.workspace_path, paths.sessions);
-      const mcpTools = await getMcpTools(parentRow.user_id);
-      const kbTools = agentUsesSkill(target.id, "enterprise-knowledge")
-        ? knowledgeTools(parentRow.workspace_path, parentRow.user_id)
-        : [];
+      const pluginTools = await platformPlugins.createTools({
+        userId: parentRow.user_id, taskId: parentRow.id, agentId: target.id, workspacePath: parentRow.workspace_path,
+      });
       const codeTools = codeExecAvailable ? await codeExecToolIfAvailable(parentRow.workspace_path) : [];
-      const skillTools = [
-        ...(skillsPrompt ? [readSkillTool(target.id), skillScriptTool(target.id)] : []),
-        writeSkillTool(),
-      ];
       // 子专家不注入 delegate_to_agent，防止递归死循环。会话授权跟父任务走。
       const subAllTools: ToolDefinition[] = [
-        ...workspaceTools(parentRow.workspace_path, parentRow.user_id),
+        ...workspaceCoreTools(parentRow.workspace_path, parentRow.user_id),
         createHostTerminalTool(parentRow.workspace_path),
-        ...skillTools,
-        ...kbTools,
-        ...mcpTools,
+        ...pluginTools,
         ...codeTools,
       ];
       const subCustomTools = prepareCustomTools(parentRow.id, subAllTools, target.tool_policy);
@@ -624,7 +614,7 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
     db.prepare("SELECT COUNT(*) AS n FROM task_uploads WHERE task_id = ?").get(row.id) as { n: number }
   ).n;
   // 渐进披露：系统提示词只带技能清单（专家显式绑定时仅注入绑定的技能），正文按需 read_skill
-  const skillsPrompt = buildSkillsPrompt(row.agent_id);
+  const skillsPrompt = platformPlugins.isPluginActive("skills") ? buildSkillsPrompt(row.agent_id) : "";
   const basePreamble = buildPreamble(
     !isPlatformWorkspace(row.workspace_path),
     codeExecAvailable,
@@ -664,36 +654,30 @@ async function ensureSession(row: TaskJoinRow): Promise<AgentSession> {
   }
 
   // 会话建立时连接启用的 MCP 服务器，把其工具注入本会话（服务器不可用只记日志）
-  const mcpTools = await getMcpTools(row.user_id);
-  const kbTools = agentUsesSkill(row.agent_id, "enterprise-knowledge")
-    ? knowledgeTools(row.workspace_path, row.user_id)
-    : [];
-  if (mcpTools.length) console.log(`[runner] 任务 ${row.id} 注入 ${mcpTools.length} 个 MCP 工具`);
+  const pluginTools = await platformPlugins.createTools({
+    userId: row.user_id, taskId: row.id, agentId: row.agent_id, workspacePath: row.workspace_path,
+  });
+  if (pluginTools.length) console.log(`[runner] 任务 ${row.id} 注入 ${pluginTools.length} 个插件工具`);
 
   // Docker 守护进程可用时注入容器隔离的代码执行工具；不可用时静默降级
   const codeTools = codeExecAvailable ? await codeExecToolIfAvailable(row.workspace_path) : [];
   if (codeTools.length) console.log(`[runner] 任务 ${row.id} 注入 run_code（Docker 隔离代码执行）`);
 
-  const skillTools = [
-    ...(skillsPrompt ? [readSkillTool(row.agent_id), skillScriptTool(row.agent_id)] : []),
-    writeSkillTool(),
-  ];
   const delegateTool = buildDelegateTool(row);
-  try {
-    writeTaskOcrRuntime(row.id, row.user_id);
-  } catch (err) {
-    console.warn(`[runner] 任务 ${row.id} 写入 OCR 配置失败：${err instanceof Error ? err.message : String(err)}`);
-  }
+  await platformPlugins.onTaskStarted({
+    userId: row.user_id,
+    taskId: row.id,
+    agentId: row.agent_id,
+    workspacePath: row.workspace_path,
+  });
 
   // 专家级工具策略：deny 直接不注入；ask 与默认询问的 terminal 包一层审批。
   // 会话授权在每次执行时现查，本会话允许和撤销都不用重建会话。
   const allTools: ToolDefinition[] = [
-    ...workspaceTools(row.workspace_path, row.user_id),
+    ...workspaceCoreTools(row.workspace_path, row.user_id),
     createHostTerminalTool(row.workspace_path),
-    ...skillTools,
     delegateTool,
-    ...kbTools,
-    ...mcpTools,
+    ...pluginTools,
     ...codeTools,
   ];
   const customTools = prepareCustomTools(row.id, allTools, row.tool_policy);
@@ -892,7 +876,9 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
 
   const baseline = session.messages.length;
   try {
-    let promptText = prompt;
+    const pluginContext = { userId: row.user_id, taskId: row.id, agentId: row.agent_id, prompt };
+    const pluginBlocks = await platformPlugins.beforeTurn(pluginContext);
+    let promptText = pluginBlocks.length ? `${prompt}\n\n${pluginBlocks.join("\n\n")}` : prompt;
     // 模型单轮输出撞到长度上限（stopReason:"length"）时自动续跑，最多 3 轮；
     // 截断不是成功也不是模型错误，直接判完成会得到"任务完成但什么都没做"的假象
     for (let round = 1; ; round++) {
@@ -956,6 +942,7 @@ async function runTurn(row: TaskJoinRow, session: AgentSession, prompt: string, 
       return;
     }
 
+    await platformPlugins.afterTurn({ ...pluginContext, assistantText: text, status: "completed" });
     setTaskStatus(row.id, "completed");
     publishStatus(row.id, "completed");
   } catch (err) {
@@ -992,7 +979,7 @@ export async function startTask(taskId: string): Promise<void> {
   // 斜杠调用（如 /周报生成 主题）：落库与展示保留原文，发给模型的是技能正文展开；
   // context_note（附件清单/@ 引用）只随首轮发给模型，展示文本保持用户原文
   const context = row.context_note ? `\n\n${row.context_note}` : "";
-  const userPrompt = expandSkillSlash(row.prompt, row.agent_id) + context;
+  const userPrompt = (platformPlugins.isPluginActive("skills") ? expandSkillSlash(row.prompt, row.agent_id) : row.prompt) + context;
   const planPhase = (parseAccessMode(row.access_mode) ?? "autonomous") === "plan";
   const firstPrompt = planPhase
     ? `${PLAN_MODE_INSTRUCTION}
@@ -1034,7 +1021,7 @@ export function sendMessage(
   void (async () => {
     try {
       const session = await ensureSession(row);
-      await runTurn(row, session, expandSkillSlash(prompt, row.agent_id) + context);
+      await runTurn(row, session, (platformPlugins.isPluginActive("skills") ? expandSkillSlash(prompt, row.agent_id) : prompt) + context);
     } catch (err) {
       failTurn(taskId, err);
     } finally {

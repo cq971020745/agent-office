@@ -1,11 +1,16 @@
 services:
   app:
-    build: ./apps/server
+    # 构建上下文是仓库根（Dockerfile 用 pnpm-workspace + packages/shared 的路径）
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
     ports:
       - "38617:38617"
     environment:
       - DATA_DIR=/app/data
       - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      # 容器要接受外部访问，必须显式放开监听（服务端默认只听 127.0.0.1）
+      - HOST=0.0.0.0
     volumes:
       - ./data:/app/data
     restart: unless-stopped

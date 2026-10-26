@@ -14,5 +14,5 @@ COPY apps/server apps/server
 RUN pnpm --filter @office/shared build && pnpm --filter @office/server build
 ENV NODE_ENV=production
 ENV DATA_DIR=/app/data
-EXPOSE 8787
+EXPOSE 38617
 CMD ["node", "apps/server/dist/index.js"]

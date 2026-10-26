@@ -5,5 +5,5 @@
 ## Consequences
 
 - 事件流→SSE/WebSocket 桥接、MCP 桥接（pi 无官方 MCP 支持）、任务编排层（pi 无子 agent API）均需自建。
-- pi 处于 0.x（当前 0.87.1），破坏性变更高频：精确锁定版本（`save-exact`），升级前逐包核对其 CHANGELOG 的 Breaking Changes 小节。
+- 精确锁定 Pi 相关包版本，升级前逐包核对其 CHANGELOG 的 Breaking Changes 小节；初选版本为 0.87.1，当前代码固定 1.2.0，版本事实以 `apps/server/package.json` 为准。
 - Node ≥ 22.19 为硬性要求。

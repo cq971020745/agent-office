@@ -14,6 +14,7 @@ import {
 import { db, now, uuid } from "../db.js";
 import { paths } from "../config.js";
 import { currentUser, requireAdmin } from "../auth.js";
+import { platformPlugins } from "../plugins/index.js";
 import {
   createSkill,
   deleteAgentSkillBinding,
@@ -420,7 +421,22 @@ function assertOwnProvider(req: FastifyRequest, reply: FastifyReply, done: () =>
   done();
 }
 
+async function requireSkillsPlugin(_req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> {
+  // 必须把 reply 返回：只 send 不 return 时 preHandler 之后 handler 仍会执行，造成重复响应
+  if (!platformPlugins.isPluginActive("skills")) {
+    return reply.code(503).send({ error: "plugin skills is disabled" });
+  }
+}
+
 export function registerAdminRoutes(app: FastifyInstance): void {
+  app.get("/plugins", { onRequest: [app.authenticate] }, async () => ({ plugins: platformPlugins.list() }));
+  app.patch("/admin/plugins/:id", { onRequest: [app.authenticate], preHandler: requireAdmin }, async (req, reply) => {
+    const body = req.body as { enabled?: boolean };
+    if (typeof body.enabled !== "boolean") return reply.code(400).send({ error: "enabled must be boolean" });
+    const id = String((req.params as { id: string }).id);
+    const ok = await platformPlugins.setEnabled(id, body.enabled);
+    return ok ? { ok: true, plugins: platformPlugins.list() } : reply.code(404).send({ error: "plugin not found or failed to change state" });
+  });
   app.get("/admin/providers", { onRequest: [app.authenticate] }, async (req) => {
     const userId = currentUser(req).id;
     ensureTextInProvider(userId);
@@ -847,22 +863,33 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     return reply.send({ ok: true });
   });
 
-  // 删除专家：有历史任务时软删除（专家从列表消失，历史任务仍可查），否则物理删除
+  // 删除专家：有历史任务或被定时任务引用时软删除（专家从列表消失，引用仍可查），否则物理删除
   app.delete("/admin/agents/:id", { onRequest: [app.authenticate] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const row = db.prepare("SELECT id, deleted FROM agents WHERE id = ?").get(id) as
       | { id: string; deleted: number }
       | undefined;
     if (!row || row.deleted) return reply.code(404).send({ error: "agent not found" });
-    const used = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE agent_id = ?").get(id) as { n: number };
-    if (used.n > 0) {
+    const usedTasks = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE agent_id = ?").get(id) as { n: number };
+    // scheduled_tasks.agent_id 有外键（评审 P0-2）：只统计 tasks 会漏掉被定时任务引用的专家，
+    // 硬删时先删了技能、最后 DELETE 才 FK 报 500，留下半删状态
+    const usedSchedules = db.prepare("SELECT COUNT(*) AS n FROM scheduled_tasks WHERE agent_id = ?").get(id) as { n: number };
+    if (usedTasks.n > 0 || usedSchedules.n > 0) {
       db.prepare("UPDATE agents SET deleted = 1 WHERE id = ?").run(id);
       return reply.send({ ok: true, mode: "soft" });
     }
-    // agent_skills 外键指向 agents(id)：先清绑定行再删专家行，否则 FK 约束 500
-    deleteAgentSkillBinding(id);
-    removeExpertSkills(id);
-    db.prepare("DELETE FROM agents WHERE id = ?").run(id);
+    // agent_skills 外键指向 agents(id)：先清绑定行再删专家行。事务化保证 FK 意外失败时
+    // 不留下「技能已删、专家还在」的半删状态
+    const hardDelete = db.transaction(() => {
+      deleteAgentSkillBinding(id);
+      removeExpertSkills(id);
+      db.prepare("DELETE FROM agents WHERE id = ?").run(id);
+    });
+    try {
+      hardDelete();
+    } catch (err) {
+      return reply.code(409).send({ error: `删除专家失败：${err instanceof Error ? err.message : String(err)}` });
+    }
     return reply.send({ ok: true, mode: "hard" });
   });
 
@@ -959,19 +986,19 @@ export function registerAdminRoutes(app: FastifyInstance): void {
 
   // ---------- 技能（{agentDir}/skills/<name>/SKILL.md，所有专家共享） ----------
 
-  app.get("/admin/skills", { onRequest: [app.authenticate] }, async () => {
+  app.get("/admin/skills", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async () => {
     const usage = getSkillUsageMap();
     return listSkills().map((s) => ({ ...s, usageCount: usage[s.name]?.count ?? 0, lastUsedAt: usage[s.name]?.lastUsedAt ?? null }));
   });
 
-  app.get("/admin/skills/:name", { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.get("/admin/skills/:name", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (req, reply) => {
     const { name } = req.params as { name: string };
     const skill = getSkill(name);
     if (!skill) return reply.code(404).send({ error: "skill not found" });
     return skill;
   });
 
-  app.post("/admin/skills", { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.post("/admin/skills", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (req, reply) => {
     const body = req.body as { name?: string; description?: string; content?: string; argumentHint?: string; alias?: string };
     const name = body.name?.trim() ?? "";
     if (!name || !body.content?.trim()) return reply.code(400).send({ error: "name 和 content 必填" });
@@ -986,7 +1013,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     return reply.code(201).send({ ok: true });
   });
 
-  app.put("/admin/skills/:name", { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.put("/admin/skills/:name", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (req, reply) => {
     const { name } = req.params as { name: string };
     if (!skillExists(name)) return reply.code(404).send({ error: "skill not found" });
     const body = req.body as { description?: string; content?: string; argumentHint?: string; alias?: string };
@@ -1004,7 +1031,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     return reply.send({ ok: true });
   });
 
-  app.delete("/admin/skills/:name", { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.delete("/admin/skills/:name", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (req, reply) => {
     const { name } = req.params as { name: string };
     if (!isValidSkillName(name) || !skillExists(name)) return reply.code(404).send({ error: "skill not found" });
     deleteSkill(name);
@@ -1015,7 +1042,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   // ---------- 技能安装与同步（skill_sources 登记，支持安装后一键同步更新） ----------
 
   // 技能市场：内置目录 + 已安装技能的来源登记（有登记的技能可同步）
-  app.get("/admin/skills/catalog", { onRequest: [app.authenticate] }, async () => {
+  app.get("/admin/skills/catalog", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async () => {
     const sources: Record<
       string,
       { source: string; kind: string; revision: string; syncedAt: string; hasUpdate?: boolean; note?: string }
@@ -1045,7 +1072,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   });
 
   // 漂移检测（P2-4）：按来源分组比对登记修订与源端最新指纹（git sha / 内容哈希）
-  app.get("/admin/skills/updates", { onRequest: [app.authenticate] }, async (_req, reply) => {
+  app.get("/admin/skills/updates", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (_req, reply) => {
     try {
       return { updates: await listSkillUpdates() };
     } catch (err) {
@@ -1054,7 +1081,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   });
 
   // 批量同步：按登记来源逐个重拉（源里删掉的移除、新增的补装、已有的一律覆盖）
-  app.post("/admin/skills/sync-all", { onRequest: [app.authenticate] }, async (_req, reply) => {
+  app.post("/admin/skills/sync-all", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (_req, reply) => {
     try {
       return await syncAllSkills();
     } catch (err) {
@@ -1063,7 +1090,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   });
 
   // 安装：来源可以是内置目录名、https:// 的 Markdown 直链或仓库地址、git: 仓库、本机路径、zip、agents:
-  app.post("/admin/skills/install", { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.post("/admin/skills/install", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (req, reply) => {
     const body = req.body as { source?: string; overwrite?: boolean };
     if (!body.source?.trim()) return reply.code(400).send({ error: "source is required" });
     try {
@@ -1075,7 +1102,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   });
 
   // 导入技能包 zip（根目录或子目录含 SKILL.md）。与专家包不同，装进平台技能库。
-  app.post("/admin/skills/install-pack", { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.post("/admin/skills/install-pack", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (req, reply) => {
     const overwrite = String((req.query as { overwrite?: string }).overwrite ?? "") === "true";
     const file = await req.file();
     if (!file) return reply.code(400).send({ error: "缺少技能包文件" });
@@ -1092,7 +1119,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
   });
 
   // 同步：按登记来源重拉该来源下全部技能（源里删掉的本地移除，新增的补装）
-  app.post("/admin/skills/:name/sync", { onRequest: [app.authenticate] }, async (req, reply) => {
+  app.post("/admin/skills/:name/sync", { onRequest: [app.authenticate], preHandler: requireSkillsPlugin }, async (req, reply) => {
     const { name } = req.params as { name: string };
     if (!getSourceInfo(name)) return reply.code(400).send({ error: "该技能不是通过安装获得的，无法同步" });
     try {

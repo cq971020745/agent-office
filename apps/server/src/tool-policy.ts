@@ -45,9 +45,10 @@ export function sanitizeToolPolicy(raw: unknown): Record<string, ToolPolicyActio
 
 /**
  * 未在专家策略里点名、但平台默认仍要人工确认的工具。
- * terminal 直接跑在宿主机上，不能因为专家没配置就变成静默放行。
+ * terminal 直接跑在宿主机上，不能因为专家没配置就变成静默放行；
+ * run_skill_script 同理（评审 P0-3：宿主机 Python 执行面）。
  */
-export const DEFAULT_ASK_TOOLS = new Set(["terminal", "knowledge_upload_document", "write_skill"]);
+export const DEFAULT_ASK_TOOLS = new Set(["terminal", "run_skill_script", "knowledge_upload_document", "write_skill"]);
 
 /**
  * 会改变工作区或系统状态的平台工具。

@@ -112,7 +112,36 @@ function createWindow(): void {
   });
 }
 
+// 方案 B：中心服务端地址持久化（userData/server-config.json）；远程模式重启后不再拉本机服务端
+function serverConfigFile(): string {
+  return path.join(app.getPath("userData"), "server-config.json");
+}
+function readServerConfig(): { baseUrl: string | null } {
+  try {
+    const raw = JSON.parse(fs.readFileSync(serverConfigFile(), "utf8")) as { baseUrl?: unknown };
+    return typeof raw.baseUrl === "string" && /^https?:\/\//i.test(raw.baseUrl)
+      ? { baseUrl: raw.baseUrl }
+      : { baseUrl: null };
+  } catch {
+    return { baseUrl: null };
+  }
+}
+
 function registerIpc(): void {
+  ipcMain.handle("agent-office:get-server-config", () => readServerConfig());
+  ipcMain.handle("agent-office:set-server-config", (_event: unknown, baseUrl: unknown) => {
+    if (typeof baseUrl !== "string" || !/^https?:\/\/[^\s/]+/i.test(baseUrl)) {
+      return { ok: false, message: "地址无效（需 http(s)://主机:端口）" };
+    }
+    try {
+      fs.mkdirSync(path.dirname(serverConfigFile()), { recursive: true });
+      fs.writeFileSync(serverConfigFile(), `${JSON.stringify({ baseUrl }, null, 2)}\n`, "utf8");
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle("agent-office:pick-directory", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(win!, {
@@ -234,6 +263,18 @@ app.whenReady().then(async () => {
 
   // 先出启动画面，再解压依赖 / 起服务——否则用户会以为卡死
   const splash = app.isPackaged ? createSplash() : null;
+
+  // 方案 B：配置了中心服务端时是远程模式——不再启动本机服务端，直连远程
+  const remoteServer = readServerConfig().baseUrl;
+  if (remoteServer) {
+    if (splash && !splash.isDestroyed()) splash.close();
+    console.log(`[server] 远程模式：${remoteServer}（跳过本机服务端）`);
+    createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+    return;
+  }
 
   try {
     await startBundledServer((msg) => setSplashStatus(splash, msg));

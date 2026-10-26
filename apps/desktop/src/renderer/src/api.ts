@@ -40,10 +40,40 @@ import type {
 } from "@office/shared";
 import { toast } from "./composables/toast";
 
-export const API_BASE = "http://127.0.0.1:38617";
-
 const TOKEN_KEY = "agent-office-token";
 const USERNAME_KEY = "agent-office-username";
+/** 服务端地址（方案 B）：默认本机一体包；登录页可改为中心服务端，所有人共用一套后端 */
+const SERVER_KEY = "agent-office-server";
+const DEFAULT_API_BASE = "http://127.0.0.1:38617";
+
+/** 归一化服务器地址：容忍无协议/尾斜杠，只接受 http(s) */
+export function normalizeServerBase(raw: string): string | null {
+  const t = raw.trim().replace(/\/+$/, "");
+  if (!t) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(t) ? t : `http://${t}`);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
+// let 导出是 ESM 活绑定：切地址后所有 import 方立刻拿到新值
+export let API_BASE = normalizeServerBase(localStorage.getItem(SERVER_KEY) ?? "") ?? DEFAULT_API_BASE;
+
+export function getServerBase(): string {
+  return API_BASE;
+}
+
+/** 切换服务端地址（登录页「服务器」设置）。返回是否成功。 */
+export function setApiBase(raw: string): boolean {
+  const base = normalizeServerBase(raw);
+  if (!base) return false;
+  API_BASE = base;
+  localStorage.setItem(SERVER_KEY, base);
+  return true;
+}
 
 export function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? "";
@@ -526,6 +556,52 @@ export function listAdminProviders() {
   return request<AdminProvider[]>("/admin/providers");
 }
 
+export interface PlatformPluginInfo {
+  id: string;
+  version: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  status: "started" | "stopped";
+}
+
+export function listPlatformPlugins() {
+  return request<{ plugins: PlatformPluginInfo[] }>("/plugins");
+}
+
+export function setPlatformPluginEnabled(id: string, enabled: boolean) {
+  return request<{ ok: true; plugins: PlatformPluginInfo[] }>(`/admin/plugins/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export interface MemoryItem {
+  id: string;
+  userId: string;
+  content: string;
+  kind: "preference" | "fact" | "experience" | "observation";
+  sourceTaskId?: string;
+  /** 来源任务标题（服务端联查，方便展示「来自任务《…》」） */
+  sourceTaskTitle?: string | null;
+  confidence: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listMemories() {
+  return request<{ memories: MemoryItem[] }>("/memory?limit=200");
+}
+
+export function createMemory(content: string, kind: MemoryItem["kind"]) {
+  return request<MemoryItem>("/memory", { method: "POST", body: JSON.stringify({ content, kind }) });
+}
+
+export function deleteMemory(id: string) {
+  return request<{ ok: true }>(`/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export function createAdminProvider(name: string, baseUrl: string, apiKey: string, apiFormat?: ProviderApiFormat) {
   return request<{ id: string }>("/admin/providers", {
     method: "POST",
@@ -950,6 +1026,130 @@ export async function downloadDeliverable(taskId: string, file: Deliverable): Pr
   const a = document.createElement("a");
   a.href = url;
   a.download = file.filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---------- 桌面皮肤包 ----------
+
+export interface SkinInfo {
+  id: string;
+  name: string;
+  version?: string;
+  author?: string;
+  description?: string;
+  /** 声明适配的外观档位；缺省视为三档通用 */
+  modes?: string[];
+  builtin: boolean;
+}
+
+export interface SkinCatalog {
+  /** 皮肤根目录绝对路径；多用户服务端部署不暴露（null），「打开皮肤目录」不可用 */
+  skinDir: string | null;
+  skins: SkinInfo[];
+  broken: Array<{ dir: string; error: string }>;
+}
+
+export function listSkins() {
+  return request<SkinCatalog>("/skins");
+}
+
+/** 拉皮肤 CSS 文本（CSS 注入用，不走 request 的 JSON 解析）。 */
+export async function fetchSkinCss(id: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/skins/${encodeURIComponent(id)}/file?path=skin.css`, {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) throw new ApiError(res.status, "皮肤样式读取失败");
+  return res.text();
+}
+
+/** 皮肤市场列表（平台插件通道：全员可见，插件停用时 503）。 */
+export function listMarketSkins() {
+  return request<{ skins: SkinInfo[] }>("/skins-market");
+}
+
+/** GitHub 市场注册表条目（注册表格式兼容数组或 { skins: [...] }） */
+export interface GithubSkinEntry {
+  id: string;
+  name: string;
+  version?: string;
+  author?: string;
+  description?: string;
+  modes?: string[];
+  zip: string;
+}
+
+/** 从 GitHub 市场注册表拉清单（服务端代理，绕开 CSP/跨域）。 */
+export async function listGithubSkins(registryUrl: string): Promise<GithubSkinEntry[]> {
+  const body = await request<unknown>(`/skins-market/github?registry=${encodeURIComponent(registryUrl)}`);
+  if (Array.isArray(body)) return body as GithubSkinEntry[];
+  const wrapped = body as { skins?: unknown };
+  return Array.isArray(wrapped.skins) ? (wrapped.skins as GithubSkinEntry[]) : [];
+}
+
+/** 一键安装 GitHub 市场里的皮肤（服务端下载 zip 并落库）。 */
+export function installGithubSkin(registryUrl: string, id: string) {
+  return request<SkinInfo>(
+    `/skins-market/github/install?registry=${encodeURIComponent(registryUrl)}&id=${encodeURIComponent(id)}`
+  );
+}
+
+/** npm 市场搜索结果条目（约定包名 muniu-skin-*） */
+export interface NpmSkinEntry {
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+}
+
+/** 搜索 npm 市场皮肤（服务端代理镜像 registry）。 */
+export function searchNpmSkins(query: string) {
+  return request<{ skins: NpmSkinEntry[] }>(`/skins-market/npm/search?q=${encodeURIComponent(query)}`);
+}
+
+/** 安装 npm 市场皮肤包（name 或 name@version，支持 @scope/name）。 */
+export function installNpmSkin(pkg: string) {
+  return request<SkinInfo>(`/skins-market/npm/install?pkg=${encodeURIComponent(pkg)}`);
+}
+
+/** 一键发布本地皮肤到 npm（用你自己的 npm 访问令牌；服务端不留存令牌）。 */
+export function publishSkinToNpm(input: { id: string; name?: string; version?: string; token: string }) {
+  return request<{ ok: true; name: string; version: string; tarball: string }>("/skins-market/npm/publish", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** 上传安装皮肤包 zip（皮肤市场插件通道：全体用户可用，插件停用时服务端回 503）。 */
+export function installSkinPack(file: File) {
+  const fd = new FormData();
+  fd.append("file", file);
+  return request<SkinInfo>("/skins-market", { method: "POST", body: fd });
+}
+
+export function deleteSkin(id: string) {
+  return request<{ ok: boolean }>(`/skins/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** 安装任务工作区里创造好的皮肤包（默认目录 skin-pack/）。 */
+export function installSkinFromTask(taskId: string, path = "skin-pack") {
+  return request<SkinInfo>("/skins/install-from-workspace", {
+    method: "POST",
+    body: JSON.stringify({ taskId, path }),
+  });
+}
+
+/** 导出皮肤包 zip 并触发浏览器保存（分享给其他用户/服务器经「上传 zip」安装）。 */
+export async function exportSkin(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/skins/${encodeURIComponent(id)}/export`, {
+    headers: { authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) throw new ApiError(res.status, "皮肤导出失败");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${id}.zip`;
   a.click();
   URL.revokeObjectURL(url);
 }

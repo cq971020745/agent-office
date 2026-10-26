@@ -1,0 +1,46 @@
+# 质量门：服务端/共享类型检查 + 全量测试 + 桌面类型检查。
+# 此前 CI 只打打包（评审：CI 只打包不跑测试/类型检查，类型错误与红测试进主干无人拦）。
+name: Checks
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    # 用 Windows：仓库的开发/测试基线在 Windows（better-sqlite3 原生模块、路径行为一致）
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        env:
+          # 类型检查不需要下载 Electron 二进制
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: pnpm install --frozen-lockfile
+
+      - name: Server typecheck
+        run: pnpm --filter @office/server typecheck
+
+      - name: Server tests
+        run: pnpm --filter @office/server test
+
+      - name: Desktop typecheck
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: pnpm --filter @office/desktop typecheck

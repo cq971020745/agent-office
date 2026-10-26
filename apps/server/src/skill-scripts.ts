@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { SKILLS_DIR, skillDirectory } from "./skills.js";
 import { truncateForContext } from "./tools.js";
+import { buildTerminalEnv } from "./host-terminal.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -102,8 +103,10 @@ export async function runSkillScript(
   try {
     const res = await execFileAsync(pythonBin(), [scriptAbs, ...args], {
       cwd: skillDir,
+      // 评审 P0-3：不再继承完整 process.env（里面有机密），只给终端白名单环境 +
+      // WPS 边车凭证；脚本需要的环境应放进技能自身的 envOverride
       env: {
-        ...process.env,
+        ...buildTerminalEnv(process.env),
         ...wpsEnv(),
         PYTHONDONTWRITEBYTECODE: "1",
         PYTHONWARNINGS: "ignore",

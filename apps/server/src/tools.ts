@@ -129,7 +129,12 @@ const AUDIO_MIME_BY_EXT: Record<string, string> = {
 };
 
 /** 每个任务一组：读写都发生在该任务专属目录内；工具失败按 pi 约定直接抛错。 */
-export function workspaceTools(root: string, userId?: string): ToolDefinition[] {
+export interface WorkspaceToolOptions {
+  includeVoice?: boolean;
+  includeWeb?: boolean;
+}
+
+export function workspaceTools(root: string, userId?: string, options: WorkspaceToolOptions = {}): ToolDefinition[] {
   const list: ToolDefinition<typeof ListParams> = {
     name: "workspace_list",
     label: "列出工作区文件",
@@ -280,5 +285,25 @@ export function workspaceTools(root: string, userId?: string): ToolDefinition[] 
     },
   };
 
-  return [list, read, write, edit, transcribeAudio, fetchUrl];
+  return [
+    list,
+    read,
+    write,
+    edit,
+    ...(options.includeVoice === false ? [] : [transcribeAudio]),
+    ...(options.includeWeb === false ? [] : [fetchUrl]),
+  ];
+}
+
+/** Host-owned file tools only; optional integrations are contributed by plugins. */
+export function workspaceCoreTools(root: string, userId?: string): ToolDefinition[] {
+  return workspaceTools(root, userId, { includeVoice: false, includeWeb: false });
+}
+
+export function voiceTools(root: string, userId: string): ToolDefinition[] {
+  return workspaceTools(root, userId, { includeVoice: true, includeWeb: false }).filter((tool) => tool.name === "transcribe_audio");
+}
+
+export function webTools(root: string): ToolDefinition[] {
+  return workspaceTools(root, undefined, { includeVoice: false, includeWeb: true }).filter((tool) => tool.name === "fetch_url");
 }

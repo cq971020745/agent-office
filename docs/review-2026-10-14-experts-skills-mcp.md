@@ -1,5 +1,7 @@
 # 评审与路线图：专家 / 技能 / MCP 连接器（2026-10-14）
 
+> 历史快照：本文保留当日证据与路线，不作为当前功能缺口清单。现行架构见 [design.md](design.md)，验证与未完成项见 [handoff.md](handoff.md)。
+
 **一句话结论：选型正确、皮骨分离。** 技能层采用了 SKILL.md 这个正确格式，但只实现了它的元数据层，没有实现它真正的价值机制（渐进披露 + 目录级资源）；专家层概念成立，但技能是全局注入，"专家"没有自己的技能边界；MCP 层因参数 schema 在桥接时丢失，带参工具事实上不可用。对标 2026-10 的主流（Agent Skills 开放规范 40+ 采用方、Codex 已把 skills 做成核心子系统、MCP 主流配置是 `.mcp.json` + 远程 HTTP），差距集中在五件事：**渐进披露、目录级技能、专家-技能绑定、MCP schema/编辑/互操作、机制化更新**。
 
 评审方法：两路并行调研——仓库代码事实基线（专家/技能/MCP 的数据模型、API、注入链路、UI）与主流约定基准（agentskills.io 规范、openai/codex 仓库与 release notes、agents.md、Claude Code / Cursor / VS Code 官方文档、modelcontextprotocol.io）。

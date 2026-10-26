@@ -222,6 +222,7 @@ export async function startBundledServer(onProgress?: ServerBootProgress): Promi
     PI_PACKAGES_DIR: path.join(root, "pi-packages"),
     SKILLS_CATALOG_DIR: path.join(root, "skills-catalog"),
     AGENT_PACKS_DIR: path.join(root, "agent-packs"),
+    SKIN_PACKS_DIR: path.join(root, "skin-packs"),
   };
   // wps365-env 闸门与 wps365-skill 脚本的内置 Python（stage 时已预装 requests/pycryptodome）
   const bundledPython = path.join(

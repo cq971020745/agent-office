@@ -21,6 +21,7 @@ export async function renewStoredKbSessions(): Promise<{ ok: number; expired: nu
 }
 
 export function startKbSessionKeeper(): void {
+  if (keeperTimer) return;
   const tick = (): void => {
     void renewStoredKbSessions().catch((err) => {
       console.warn("[kb-session] 续期失败：", err);
@@ -30,4 +31,16 @@ export function startKbSessionKeeper(): void {
   timer.unref();
   const first = setTimeout(tick, 20_000);
   first.unref();
+  keeperTimer = timer;
+  keeperInitialTimer = first;
+}
+
+let keeperTimer: NodeJS.Timeout | null = null;
+let keeperInitialTimer: NodeJS.Timeout | null = null;
+
+export function stopKbSessionKeeper(): void {
+  if (keeperTimer) clearInterval(keeperTimer);
+  if (keeperInitialTimer) clearTimeout(keeperInitialTimer);
+  keeperTimer = null;
+  keeperInitialTimer = null;
 }

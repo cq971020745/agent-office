@@ -340,6 +340,28 @@ function readBuddyEnabled(): boolean {
   return localStorage.getItem(STORAGE_BUDDY) !== "0"; // 默认开启
 }
 
+/**
+ * 运行时主题样式层。级联顺序：基础 style.css → 本层 → 皮肤包层（useSkin 注入，
+ * 排在后面），后写者在同特异性下胜出——皮肤包只需覆盖自己关心的令牌，无需
+ * !important。早期版本把变量写在 html 内联样式上，内联优先级高于一切样式表，
+ * 皮肤层无法正常覆盖，故改为样式层。
+ */
+const RUNTIME_THEME_STYLE_ID = "runtime-theme";
+
+function ensureRuntimeStyleTag(): HTMLStyleElement {
+  let tag = document.getElementById(RUNTIME_THEME_STYLE_ID) as HTMLStyleElement | null;
+  if (!tag) {
+    tag = document.createElement("style");
+    tag.id = RUNTIME_THEME_STYLE_ID;
+    // 本层必须排在皮肤层之前（同特异性后写者胜）：切主题重建标签时若直接
+    // appendChild，会落到皮肤层后面，主题变量反过来压掉皮肤覆盖
+    const skinTag = document.querySelector("style[data-skin-style]");
+    if (skinTag) document.head.insertBefore(tag, skinTag);
+    else document.head.appendChild(tag);
+  }
+  return tag;
+}
+
 /** 把主题写到 <html>，挂载前也可调用以避免闪烁 */
 export function applyThemeToDocument(
   mode: ThemeMode,
@@ -357,17 +379,17 @@ export function applyThemeToDocument(
   const base = resolveBaseColor(accentId, customHex);
   const accent = deriveAccentTokens(base, mode);
   const surfaces = deriveDepthTokens(mode, depth);
-  const style = root.style;
-  style.setProperty("--accent", accent.accent);
-  style.setProperty("--accent-strong", accent.accentStrong);
-  style.setProperty("--accent-soft", accent.accentSoft);
-  style.setProperty("--accent-border", accent.accentBorder);
-  style.setProperty("--on-accent", accent.onAccent);
-  style.setProperty("--accent-rgb", accent.rgb);
-  style.setProperty("--accent-base", base);
-  for (const [key, value] of Object.entries(surfaces)) {
-    style.setProperty(key, value);
-  }
+  const declarations = [
+    `--accent:${accent.accent}`,
+    `--accent-strong:${accent.accentStrong}`,
+    `--accent-soft:${accent.accentSoft}`,
+    `--accent-border:${accent.accentBorder}`,
+    `--on-accent:${accent.onAccent}`,
+    `--accent-rgb:${accent.rgb}`,
+    `--accent-base:${base}`,
+    ...Object.entries(surfaces).map(([key, value]) => `${key}:${value}`),
+  ];
+  ensureRuntimeStyleTag().textContent = `:root{${declarations.join(";")}}`;
 }
 
 export function bootstrapTheme(): void {

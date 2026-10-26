@@ -502,6 +502,11 @@ export function closeMcpClient(serverId: string): void {
   clients.delete(serverId);
 }
 
+/** 回收全部连接（stdio 子进程/远程会话）。停用 mcp 平台插件时调用（评审 P1：不回收则子进程残留）。 */
+export function closeAllMcpClients(): void {
+  for (const serverId of [...clients.keys()]) closeMcpClient(serverId);
+}
+
 /** 连接指定服务器并返回工具列表（不缓存结果，供「测试连接」用）。 */
 export async function probeMcpTools(row: McpServerRow): Promise<McpToolInfo[]> {
   const client = getClient(row.id, row);

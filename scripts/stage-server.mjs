@@ -248,7 +248,7 @@ fs.renameSync(nm, deps);
 // 裁掉跨平台二进制 / 浏览器包 / 文档测试，否则 NSIS 要解压上万小文件，安装会卡很久
 pruneStageDeps(deps);
 
-const catalogs = ["pi-packages", "skills-catalog", "agent-packs"];
+const catalogs = ["pi-packages", "skills-catalog", "agent-packs", "skin-packs"];
 for (const name of catalogs) {
   const src = path.join(root, name);
   if (!fs.existsSync(src)) throw new Error(`缺少资源目录：${src}`);

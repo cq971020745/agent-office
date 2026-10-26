@@ -13,7 +13,8 @@ import {
 } from "@office/shared";
 import { currentUser } from "../auth.js";
 import { ensureTextInProvider } from "../textin-provider.js";
-import { isPlatformWorkspace, paths } from "../config.js";
+import { paths } from "../config.js";
+import { isStrictlyInsidePlatformWorkspace, resolveUserWorkspaceDir } from "../workspace-boundary.js";
 import { db, now, uuid } from "../db.js";
 import { attachSse, clearTask, publishStatus } from "../sse.js";
 import {
@@ -30,6 +31,7 @@ import { listSessionGrants, parseToolDecision, resolveToolApproval, revokeSessio
 import { parseAccessMode } from "../tool-policy.js";
 import { listEffectiveSkills, listSkills } from "../skills.js";
 import { getAgentSkillBinding } from "../skills.js";
+import { platformPlugins } from "../plugins/index.js";
 import { moveFile, stageMultipartFiles, uniqueTargetPath, attachmentNote, type StagedUpload } from "../uploads.js";
 import { buildMentionsNote, parseMentionsField, sanitizeMentions } from "../mentions.js";
 import { listWorkspaceEntries, resolveInsideWorkspace } from "../workspace-tree.js";
@@ -446,12 +448,11 @@ export function registerTaskRoutes(app: FastifyInstance): void {
       let workspace: string;
       let customWorkspace = 0;
       if (body.workspaceDir?.trim()) {
-        const dir = path.resolve(body.workspaceDir.trim());
-        if (!path.isAbsolute(dir)) return reply.code(400).send({ error: "工作目录必须是绝对路径" });
-        if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-          return reply.code(400).send({ error: "工作目录不存在或不是目录" });
-        }
-        workspace = dir;
+        // 评审 P0-1：挡住 DATA_DIR 内部 / 平台工作区 / 符号链接，防止经工作区读 app.db、
+        // 他人会话，或删除时误删工作区根
+        const picked = resolveUserWorkspaceDir(body.workspaceDir.trim());
+        if (!picked.ok) return reply.code(400).send({ error: picked.error });
+        workspace = picked.dir;
         customWorkspace = 1;
       } else if (agent.folder) {
         fs.mkdirSync(agent.folder, { recursive: true });
@@ -777,6 +778,7 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     if (row.status === "running" || row.status === "pending") {
       return reply.code(409).send({ error: "任务进行中，请先取消再删除" });
     }
+    await platformPlugins.onTaskDeleted({ userId: row.user_id, taskId: id, agentId: row.agent_id, status: row.status });
     const detail = db
       .prepare("SELECT workspace_path, custom_workspace, session_id FROM tasks WHERE id = ?")
       .get(id) as { workspace_path: string; custom_workspace: number; session_id: string | null } | undefined;
@@ -787,8 +789,8 @@ export function registerTaskRoutes(app: FastifyInstance): void {
     db.prepare("DELETE FROM task_session_grants WHERE task_id = ?").run(id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
 
-    // 仅删除平台隔离工作区（防误删用户自选目录 / 专家常驻目录）
-    if (detail && isPlatformWorkspace(detail.workspace_path)) {
+    // 仅删除严格位于平台工作区根内的目录（防误删用户自选目录 / 专家常驻目录 / 工作区根本身）
+    if (detail && isStrictlyInsidePlatformWorkspace(detail.workspace_path)) {
       fs.rmSync(path.resolve(detail.workspace_path), { recursive: true, force: true });
     }
     // 会话 JSONL：只删本任务的会话文件（同目录可能还有其他任务的会话）
@@ -921,7 +923,9 @@ export function registerTaskRoutes(app: FastifyInstance): void {
 
   // 斜杠技能候选（输入框 / 弹层数据源）：当前会话可用的全部技能（专家未绑定时 = 平台技能库）
   // expandSkillSlash 本身不限制 user-invocable；弹层与展开规则对齐，便于从 ~/.agents 同步来的技能也能 / 选用
-  app.get("/skills", { onRequest: [app.authenticate] }, async (req) => {
+  app.get("/skills", { onRequest: [app.authenticate], preHandler: async (_request, reply) => {
+    if (!platformPlugins.isPluginActive("skills")) return reply.code(503).send({ error: "plugin skills is disabled" });
+  } }, async (req) => {
     const agentId = String((req.query as { agentId?: string }).agentId ?? "").trim();
     const skills = agentId ? listEffectiveSkills(agentId) : listSkills();
     return skills.map((s) => ({

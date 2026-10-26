@@ -349,6 +349,29 @@ export function migrate(): void {
     db.prepare("INSERT INTO schema_flags (key, value) VALUES ('kb_user_cutover', ?)").run(now());
   }
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS platform_plugins (
+      id TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      config TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      kind TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source_task_id TEXT,
+      confidence REAL NOT NULL DEFAULT 0.5,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_user_active ON memories(user_id, active, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memories_source_task ON memories(source_task_id);
+  `);
+
   // V17：供应商显式绑定扫描件 OCR 视觉模型；留空则 ocr_to_md 使用开源 Tesseract.js
   try {
     db.exec("ALTER TABLE model_providers ADD COLUMN ocr_model TEXT NOT NULL DEFAULT ''");

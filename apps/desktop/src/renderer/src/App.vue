@@ -376,6 +376,10 @@ async function submitWpsSync(): Promise<void> {
           <svg class="icon" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg>
           <span v-if="!sidebarCollapsed">企业知识库</span>
         </RouterLink>
+        <RouterLink to="/memory" class="nav-item" active-class="active" :title="sidebarCollapsed ? '长期记忆' : undefined">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.74V19h8v-3.26A7 7 0 0 0 12 3z" /><path d="M9 22h6M9 16h6" /></svg>
+          <span v-if="!sidebarCollapsed">长期记忆</span>
+        </RouterLink>
         <RouterLink to="/models" class="nav-item" active-class="active" :title="sidebarCollapsed ? '模型供应商' : undefined">
           <svg class="icon" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
           <span v-if="!sidebarCollapsed">模型供应商</span>
@@ -383,6 +387,10 @@ async function submitWpsSync(): Promise<void> {
         <RouterLink v-if="isAdmin" to="/admin" class="nav-item" active-class="active" :title="sidebarCollapsed ? '管理后台' : undefined">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
           <span v-if="!sidebarCollapsed">管理后台</span>
+        </RouterLink>
+        <RouterLink v-if="isAdmin" to="/plugins" class="nav-item" active-class="active" :title="sidebarCollapsed ? '平台插件' : undefined">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M8 3v4M16 3v4M4 7h16M6 7v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7" /><path d="M9 11h6M9 15h6" /></svg>
+          <span v-if="!sidebarCollapsed">平台插件</span>
         </RouterLink>
       </nav>
 

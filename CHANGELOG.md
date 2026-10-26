@@ -2,6 +2,14 @@
 
 记录平台每次迭代的功能、修复与行为变化。领域术语见 [CONTEXT.md](CONTEXT.md)。
 
+## 2026-10-26（0.1.5 部署准备）
+
+- 生产 Web 控制台默认使用页面所在 API 源；Electron 和开发模式继续使用本机 38617。
+- Windows CI 固定 `windows-2022`，避免最新镜像 Visual Studio 2026 不被当前 node-gyp 识别；新检出先构建共享契约再检查服务端。
+- Mac 改为 ARM/Intel 原生构建矩阵，分别捆绑对应架构 Node、Python 和 SQLite；先创建草稿 Release，收齐验证后公开。
+- 一体包补齐真实 SQLite 原生绑定，冒烟实际创建数据库；runtime 指纹包含构建代码，避免服务包版本不变时升级继续使用旧缓存。
+- 新增 `scripts/prepare-deployment.mjs`，生成不含运行数据和宿主依赖的服务端/Web 部署包，在目标平台安装依赖。
+
 ## 2026-10-26（工作树能力归档，未发布新版本）
 
 ### 新增与变更

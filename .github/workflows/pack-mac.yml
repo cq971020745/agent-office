@@ -13,7 +13,7 @@ on:
           - arm64
           - x64
           - universal
-        default: arm64
+        default: universal
       release_tag:
         description: "可选：发布到该 GitHub Release tag（如 v0.1.0）；留空只上传 Artifact"
         required: false
@@ -25,46 +25,63 @@ concurrency:
 
 jobs:
   pack:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
         with:
           node-version: "22"
+          architecture: ${{ matrix.arch }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
         with:
           version: 10.28.1
 
       - name: Get pnpm store path
         id: pnpm-cache
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
         shell: bash
         run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
         uses: actions/cache@v4
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-
+            ${{ runner.os }}-${{ matrix.arch }}-pnpm-
 
       - name: Install dependencies
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
         run: pnpm install --frozen-lockfile
 
       - name: Stage server + build + pack
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          ARCH="${{ inputs.arch }}"
+          ARCH="$TARGET_ARCH"
           node scripts/stage-server.mjs
           pnpm --filter @office/desktop build
           cd apps/desktop
@@ -85,8 +102,9 @@ jobs:
 
       - name: Upload mac artifacts
         uses: actions/upload-artifact@v4
+        if: ${{ inputs.arch == 'universal' || inputs.arch == matrix.arch }}
         with:
-          name: muniu-liuma-mac-${{ inputs.arch }}
+          name: muniu-liuma-mac-${{ matrix.arch }}
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
@@ -94,7 +112,7 @@ jobs:
           retention-days: 14
 
       - name: Rename DMG to ASCII for GitHub Release
-        if: ${{ inputs.release_tag != '' }}
+        if: ${{ inputs.release_tag != '' && (inputs.arch == 'universal' || inputs.arch == matrix.arch) }}
         working-directory: apps/desktop/release
         env:
           REL_TAG: ${{ inputs.release_tag }}
@@ -112,12 +130,13 @@ jobs:
           ls -lah
 
       - name: Publish to GitHub Release
-        if: ${{ inputs.release_tag != '' }}
+        if: ${{ inputs.release_tag != '' && (inputs.arch == 'universal' || inputs.arch == matrix.arch) }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag }}
           name: 木牛流马 ${{ inputs.release_tag }}
-          draft: false
+          # 先收齐、校验 Windows 与两种 Mac 包，再由发布步骤公开。
+          draft: true
           prerelease: false
           files: |
             apps/desktop/release/Muni-*.dmg
@@ -125,7 +144,7 @@ jobs:
           body: |
             木牛流马桌面客户端（Mac）。
 
-            - 官网下载（推荐）：http://139.196.147.134/muniu-liuma/
+            - 官网下载（推荐）：http://139.196.147.134/AI/muniu-liuma/
             - 未使用 Apple 开发者证书签名。若提示「已损坏」，在终端执行：
               `xattr -cr /Applications/木牛流马.app`
             - 请勿用微信转发安装包。

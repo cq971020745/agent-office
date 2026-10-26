@@ -7,6 +7,8 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const stageRoot = path.join(root, "dist", "stage");
@@ -14,6 +16,10 @@ const serverStage = path.join(stageRoot, "server");
 const sharedStage = path.join(serverStage, "vendor", "shared");
 
 function rmrf(target) {
+  const relative = path.relative(path.join(root, "dist"), path.resolve(target));
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`拒绝清理 dist 之外或 dist 根目录：${target}`);
+  }
   fs.rmSync(target, { recursive: true, force: true });
 }
 
@@ -248,6 +254,25 @@ fs.renameSync(nm, deps);
 // 裁掉跨平台二进制 / 浏览器包 / 文档测试，否则 NSIS 要解压上万小文件，安装会卡很久
 pruneStageDeps(deps);
 
+// npm --ignore-scripts 不会构建 SQLite 原生模块。复制本平台已由 pnpm 构建的产物，
+// 并实际打开数据库验证；只 require('better-sqlite3') 不会触发原生绑定加载。
+const serverRequire = createRequire(path.join(root, "apps", "server", "package.json"));
+const sqliteRoot = path.dirname(serverRequire.resolve("better-sqlite3/package.json"));
+const SourceDatabase = serverRequire("better-sqlite3");
+const sourceDatabase = new SourceDatabase(":memory:");
+sourceDatabase.prepare("SELECT 1").get();
+sourceDatabase.close();
+const sqliteBindings = Object.keys(serverRequire.cache).filter((filename) => {
+  const rel = path.relative(sqliteRoot, filename);
+  return filename.endsWith(".node") && rel && !rel.startsWith("..") && !path.isAbsolute(rel);
+});
+if (!sqliteBindings.length) throw new Error("未发现已加载的 SQLite 原生绑定");
+for (const sqliteBinding of sqliteBindings) {
+  const stagedBinding = path.join(deps, "better-sqlite3", path.relative(sqliteRoot, sqliteBinding));
+  fs.mkdirSync(path.dirname(stagedBinding), { recursive: true });
+  fs.copyFileSync(sqliteBinding, stagedBinding);
+}
+
 const catalogs = ["pi-packages", "skills-catalog", "agent-packs", "skin-packs"];
 for (const name of catalogs) {
   const src = path.join(root, name);
@@ -265,7 +290,7 @@ if (!fs.existsSync(path.join(deps, "fastify"))) {
 // 临时 junction 回 node_modules 做冒烟（Windows junction 无需管理员）
 fs.symlinkSync(deps, nm, process.platform === "win32" ? "junction" : "dir");
 try {
-  execSync(`node -e "require('better-sqlite3'); require('fastify'); console.log('[stage] deps ok')"`, {
+  execSync(`node -e "const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.prepare('SELECT 1').get(); db.close(); require('fastify'); console.log('[stage] deps ok')"`, {
     cwd: serverStage,
     stdio: "inherit",
   });
@@ -284,7 +309,21 @@ if (fs.existsSync(tgz)) fs.rmSync(tgz, { force: true });
 // 输出用相对路径（cwd 定位到 serverStage）：GNU tar 会把 "D:\..." 里的 D: 当远程主机名，
 // Windows 自带 bsdtar 与 GNU tar 都能跑相对路径，跨 shell 稳定。
 execSync(`tar -czhf deps.tgz -C "${deps}" .`, { cwd: serverStage, stdio: "inherit" });
-fs.writeFileSync(path.join(serverStage, "deps.version"), `${serverPkg.version}\n`, "utf8");
+// 包版本长期未变时也必须刷新 runtime（含 server dist），避免升级继续使用旧代码。
+const runtimeHash = createHash("sha256");
+runtimeHash.update(JSON.stringify(stagedPkg));
+runtimeHash.update(`${process.platform}/${process.arch}/${process.versions.modules}`);
+function hashRuntimeDir(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const filename = path.join(dir, entry.name);
+    runtimeHash.update(path.relative(serverStage, filename));
+    if (entry.isDirectory()) hashRuntimeDir(filename);
+    else runtimeHash.update(fs.readFileSync(filename));
+  }
+}
+hashRuntimeDir(path.join(serverStage, "dist"));
+hashRuntimeDir(sharedStage);
+fs.writeFileSync(path.join(serverStage, "deps.version"), `${runtimeHash.digest("hex")}\n`, "utf8");
 const tgzMb = (fs.statSync(tgz).size / (1024 * 1024)).toFixed(1);
 console.log(`[stage] deps.tgz ${tgzMb}MB`);
 rmrf(deps);

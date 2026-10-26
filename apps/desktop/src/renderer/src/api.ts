@@ -44,7 +44,10 @@ const TOKEN_KEY = "agent-office-token";
 const USERNAME_KEY = "agent-office-username";
 /** 服务端地址（方案 B）：默认本机一体包；登录页可改为中心服务端，所有人共用一套后端 */
 const SERVER_KEY = "agent-office-server";
-const DEFAULT_API_BASE = "http://127.0.0.1:38617";
+// 生产 Web 控制台使用页面所在服务；Electron file:// 与开发服务器仍连接本机 API。
+const DEFAULT_API_BASE = import.meta.env.PROD && /^https?:$/.test(location.protocol)
+  ? location.origin
+  : "http://127.0.0.1:38617";
 
 /** 归一化服务器地址：容忍无协议/尾斜杠，只接受 http(s) */
 export function normalizeServerBase(raw: string): string | null {

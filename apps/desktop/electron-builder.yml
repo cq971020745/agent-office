@@ -57,9 +57,6 @@ mac:
   hardenedRuntime: false
   target:
     - target: dmg
-      arch:
-        - x64
-        - arm64
   category: public.app-category.productivity
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
 linux:

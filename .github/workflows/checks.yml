@@ -16,7 +16,8 @@ concurrency:
 jobs:
   checks:
     # 用 Windows：仓库的开发/测试基线在 Windows（better-sqlite3 原生模块、路径行为一致）
-    runs-on: windows-latest
+    # 固定 VS 2022 镜像，避免 windows-latest 的 VS 2026 超出 node-gyp 识别范围。
+    runs-on: windows-2022
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +34,9 @@ jobs:
           # 类型检查不需要下载 Electron 二进制
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: pnpm install --frozen-lockfile
+
+      - name: Build shared contracts
+        run: pnpm --filter @office/shared build
 
       - name: Server typecheck
         run: pnpm --filter @office/server typecheck

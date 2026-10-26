@@ -31,5 +31,8 @@
       "onnxruntime-node",
       "sharp"
     ]
+  },
+  "devDependencies": {
+    "tar": "7.5.22"
   }
 }

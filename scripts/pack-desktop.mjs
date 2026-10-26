@@ -3,10 +3,11 @@
  * 用法：node scripts/pack-desktop.mjs [--win|--mac|--linux]
  * 不带平台参数时打当前平台。
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = path.join(root, "apps", "desktop");
@@ -38,8 +39,25 @@ if (!fs.existsSync(stageServer)) {
   throw new Error(`stage 未就绪：${stageServer}`);
 }
 
-const builderArgs = builderFlags ? ` ${builderFlags}` : "";
-run(`pnpm exec electron-builder${builderArgs}`, desktop);
+const desktopRequire = createRequire(path.join(desktop, "package.json"));
+const electronDist = path.dirname(desktopRequire("electron"));
+console.log("[pack] electron-builder using installed Electron:", electronDist);
+execFileSync(process.execPath, [
+  desktopRequire.resolve("electron-builder/cli.js"),
+  ...(builderFlags ? [builderFlags] : []),
+  "--publish", "never", `--config.electronDist=${electronDist}`,
+], {
+  cwd: desktop,
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    npm_config_user_agent: process.env.npm_config_user_agent || `pnpm/${JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).packageManager.split("@")[1]}`,
+    ELECTRON_CACHE: path.join(root, "dist", "cache", "electron"),
+    ELECTRON_BUILDER_CACHE: path.join(root, "dist", "cache", "electron-builder"),
+    ELECTRON_BUILDER_BINARIES_MIRROR: process.env.ELECTRON_BUILDER_BINARIES_MIRROR || "https://npmmirror.com/mirrors/electron-builder-binaries/",
+    CSC_IDENTITY_AUTO_DISCOVERY: "false",
+  },
+});
 
 const release = path.join(desktop, "release");
 console.log(`[pack] 产物目录：${release}`);

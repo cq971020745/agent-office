@@ -1,0 +1,60 @@
+name: Pack Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Draft release tag, for example v0.1.5"
+        required: true
+        default: "v0.1.5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pack-win-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pack:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build Windows installers
+        run: pnpm pack:win
+      - name: Check packaged native database
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:RUNNER_TEMP "muniu-native-smoke"
+          New-Item -ItemType Directory -Force $runtime | Out-Null
+          tar -xzf apps/desktop/release/win-unpacked/resources/server/deps.tgz -C $runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $node = Resolve-Path apps/desktop/release/win-unpacked/resources/node/node.exe
+          $env:MUNIU_NATIVE_SMOKE = $runtime
+          & $node -e 'const path=require("node:path");const Database=require(path.join(process.env.MUNIU_NATIVE_SMOKE,"better-sqlite3"));const db=new Database(":memory:");console.log(db.prepare("SELECT 1 AS bundled_native_ok").get());db.close();'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Rename installers to ASCII
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          Get-ChildItem apps/desktop/release/*-win-x64-Setup.exe | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination "apps/desktop/release/Muni-$version-win-x64-Setup.exe" }
+          Get-ChildItem apps/desktop/release/*-win-x64-Portable.exe | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination "apps/desktop/release/Muni-$version-win-x64-Portable.exe" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muniu-windows
+          path: apps/desktop/release/Muni-*.exe
+          if-no-files-found: error
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          draft: true
+          files: apps/desktop/release/Muni-*.exe
+          fail_on_unmatched_files: true

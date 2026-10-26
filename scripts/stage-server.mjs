@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { create as createTar } from "tar";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const stageRoot = path.join(root, "dist", "stage");
@@ -305,10 +306,9 @@ materializeLinkedPackage(path.join(deps, "@office", "shared"), sharedStage);
 const tgz = path.join(serverStage, "deps.tgz");
 console.log("[stage] pack deps.tgz");
 if (fs.existsSync(tgz)) fs.rmSync(tgz, { force: true });
-// -h：跟随符号链接/junction，把真实文件打进归档。
-// 输出用相对路径（cwd 定位到 serverStage）：GNU tar 会把 "D:\..." 里的 D: 当远程主机名，
-// Windows 自带 bsdtar 与 GNU tar 都能跑相对路径，跨 shell 稳定。
-execSync(`tar -czhf deps.tgz -C "${deps}" .`, { cwd: serverStage, stdio: "inherit" });
+// 用 Node 归档库规避 Windows 系统 tar 崩溃与盘符/中文路径解析问题。
+// follow 保证依赖中的链接按真实内容打包；portable 去掉宿主所有者信息。
+await createTar({ file: tgz, cwd: deps, gzip: true, follow: true, portable: true }, ["."]);
 // 包版本长期未变时也必须刷新 runtime（含 server dist），避免升级继续使用旧代码。
 const runtimeHash = createHash("sha256");
 runtimeHash.update(JSON.stringify(stagedPkg));
@@ -369,7 +369,7 @@ function stagePython() {
   fs.rmSync(path.join(tmp, "python", "LICENSEBUNDLE"), { recursive: true, force: true });
   copyDir(path.join(tmp, "python"), pyDir);
   rmrf(tmp);
-  fs.rmSync(tgz, { force: true });
+  // 保留已验证的下载缓存，下一次清空 stage 时仍可复用。
 
   const pyBin = path.join(pyDir, process.platform === "win32" ? "python.exe" : path.join("bin", "python3"));
   const index = process.env.PIP_INDEX_URL || "https://pypi.tuna.tsinghua.edu.cn/simple";

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import type { AgentConfig, ScheduledTask, Task } from "@office/shared";
+import type { AgentConfig, ModelOption, ScheduledTask, Task } from "@office/shared";
 import {
   createSchedule,
   deleteSchedule,
   deleteTask,
   listAgents,
+  listModelOptions,
   listSchedules,
   listTasksPaged,
   runScheduleNow,
@@ -51,6 +52,12 @@ const sTime = ref("09:00");
 const sWeekday = ref(1);
 const sInterval = ref(60);
 const sSaving = ref(false);
+// 显式指定触发时使用的供应商/模型（须是本人启用的）；留空则触发时回退到用户第一个可用配置
+const sProviderId = ref("");
+const sModelId = ref("");
+const modelOptions = ref<ModelOption[]>([]);
+
+const sModels = computed(() => modelOptions.value.find((p) => p.providerId === sProviderId.value)?.models ?? []);
 
 const WEEKDAY_NAMES: Record<number, string> = {
   1: "周一",
@@ -86,6 +93,18 @@ async function loadSchedules(): Promise<void> {
   }
 }
 
+/** 弹窗数据源懒加载：专家与本人模型供应商只在首次打开时拉取 */
+async function ensureFormOptions(): Promise<void> {
+  if (!agents.value.length || !modelOptions.value.length) {
+    const [agentsRes, modelsRes] = await Promise.allSettled([
+      agents.value.length ? Promise.resolve(null) : listAgents(),
+      modelOptions.value.length ? Promise.resolve(null) : listModelOptions(),
+    ]);
+    if (agentsRes.status === "fulfilled" && agentsRes.value) agents.value = agentsRes.value;
+    if (modelsRes.status === "fulfilled" && modelsRes.value) modelOptions.value = modelsRes.value;
+  }
+}
+
 async function openCreateSchedule(): Promise<void> {
   editingSchedule.value = null;
   sTitle.value = "";
@@ -95,14 +114,10 @@ async function openCreateSchedule(): Promise<void> {
   sTime.value = "09:00";
   sWeekday.value = 1;
   sInterval.value = 60;
+  sProviderId.value = "";
+  sModelId.value = "";
   showScheduleModal.value = true;
-  if (!agents.value.length) {
-    try {
-      agents.value = await listAgents();
-    } catch {
-      // ignore
-    }
-  }
+  await ensureFormOptions();
 }
 
 async function openEditSchedule(s: ScheduledTask): Promise<void> {
@@ -110,6 +125,9 @@ async function openEditSchedule(s: ScheduledTask): Promise<void> {
   sTitle.value = s.title;
   sPrompt.value = s.prompt;
   sAgentId.value = s.agentId;
+  // 已保存的模型回显；供应商已被停用/删除时选项列表里没有它，select 显示为空但仍保留原值
+  sProviderId.value = s.providerId || "";
+  sModelId.value = s.modelId || "";
   const daily = /^daily:(\d{2}:\d{2})$/.exec(s.scheduleExpr);
   const weekly = /^weekly:([1-7]):(\d{2}:\d{2})$/.exec(s.scheduleExpr);
   const interval = /^interval:(\d+)$/.exec(s.scheduleExpr);
@@ -125,13 +143,7 @@ async function openEditSchedule(s: ScheduledTask): Promise<void> {
     sInterval.value = Number(interval[1]);
   }
   showScheduleModal.value = true;
-  if (!agents.value.length) {
-    try {
-      agents.value = await listAgents();
-    } catch {
-      // ignore
-    }
-  }
+  await ensureFormOptions();
 }
 
 async function saveSchedule(): Promise<void> {
@@ -139,14 +151,22 @@ async function saveSchedule(): Promise<void> {
     toast("error", "请填写任务提示词");
     return;
   }
+  // 服务端要求 providerId/modelId 成对出现；都留空 = 触发时用我的可用配置
+  if (!!sProviderId.value !== !!sModelId.value) {
+    toast("error", "供应商与模型需同时选择，或都留空使用默认配置");
+    return;
+  }
   sSaving.value = true;
   try {
     const scheduleExpr = buildScheduleExpr();
     if (editingSchedule.value) {
+      // 编辑时始终传这两个字段：清空选择即恢复「跟随可用配置」（空串在服务端落为 NULL）
       await updateSchedule(editingSchedule.value.id, {
         title: sTitle.value.trim() || sPrompt.value.trim().slice(0, 32),
         prompt: sPrompt.value.trim(),
         agentId: sAgentId.value || undefined,
+        providerId: sProviderId.value,
+        modelId: sModelId.value,
         scheduleExpr,
       });
       toast("success", "定时任务已更新");
@@ -155,6 +175,7 @@ async function saveSchedule(): Promise<void> {
         title: sTitle.value.trim() || sPrompt.value.trim().slice(0, 32),
         prompt: sPrompt.value.trim(),
         agentId: sAgentId.value || undefined,
+        ...(sProviderId.value ? { providerId: sProviderId.value, modelId: sModelId.value } : {}),
         scheduleExpr,
       });
       toast("success", "定时任务已创建");
@@ -478,6 +499,19 @@ const STATUS_LABEL: Record<string, string> = { ...STATUS_TEXT };
             <option value="">通用助手（默认）</option>
             <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}</option>
           </select>
+        </div>
+        <div class="form-row">
+          <label>执行模型（不选则触发时使用我的可用配置）</label>
+          <div class="sched-picker">
+            <select v-model="sProviderId" class="sched-kind">
+              <option value="">默认供应商</option>
+              <option v-for="p in modelOptions" :key="p.providerId" :value="p.providerId">{{ p.providerName }}</option>
+            </select>
+            <select v-model="sModelId" class="sched-sub" :disabled="!sProviderId">
+              <option value="">默认模型</option>
+              <option v-for="m in sModels" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
         </div>
         <div class="form-row">
           <label>执行周期</label>

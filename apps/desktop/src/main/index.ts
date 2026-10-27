@@ -337,8 +337,10 @@ app.whenReady().then(async () => {
   try {
     await startBundledServer((msg) => setSplashStatus(splash, msg));
   } catch (err) {
-    if (splash && !splash.isDestroyed()) splash.close();
+    // 先弹错误框再关启动画面：splash 是最后一个窗口，先关会立刻触发
+    // window-all-closed → app.quit()，错误框还没显示进程就退了（无提示闪退）。
     await showServerStartError(err);
+    if (splash && !splash.isDestroyed()) splash.close();
     app.quit();
     return;
   }

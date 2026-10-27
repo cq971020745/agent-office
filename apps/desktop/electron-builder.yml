@@ -25,11 +25,14 @@ extraResources:
     to: skin-packs
   - from: ../../dist/stage/python
     to: python
-# Windows 未开开发者模式时，winCodeSign 解压 darwin 符号链接会失败；一体包不做代码签名
+# 无证书时 signing 自动跳过，一体包不做代码签名
 forceCodeSigning: false
 # maximum 会把安装包压得很小，但解压上万小文件时安装极慢；normal 略增体积、安装快很多
 compression: normal
 win:
+  # 必须保持 false：置 true 会进入签名管理器并下载 winCodeSign，其中 darwin 符号链接
+  # 在未开开发者模式的 Windows（本机与 CI）上解压失败。exe 的图标/版本信息由
+  # after-pack.cjs 用 rcedit npm 包补写（独立二进制，不依赖 winCodeSign）。
   signAndEditExecutable: false
   target:
     - target: nsis

@@ -104,10 +104,24 @@ function extractDepsTgz(tgz: string, root: string, onProgress?: ServerBootProgre
   }
   fs.mkdirSync(nmDir, { recursive: true });
   onProgress?.("正在解压内嵌依赖（首次约 1～3 分钟，请稍候）…");
-  execFileSync("tar", ["-xzf", tgz, "-C", nmDir], {
-    stdio: "ignore",
-    windowsHide: true,
-  });
+  // PATH 里的 tar 可能命中 Git 自带 GNU tar：它把 "D:\..." 的盘符当远程主机
+  // （Cannot connect to D:），首次解压必失败且进程无提示退出。Windows 直接用
+  // 系统自带 bsdtar（Win10 1803+ 均有）；stderr 必须捕获进错误信息，否则
+  // 解压失败会被 stdio 静默吞掉，只剩一个闪退。
+  const systemTar = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+  const tarBin = process.platform === "win32" && fs.existsSync(systemTar) ? systemTar : "tar";
+  try {
+    execFileSync(tarBin, ["-xzf", tgz, "-C", nmDir], {
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    });
+  } catch (err) {
+    const stderr =
+      err && typeof err === "object" && "stderr" in err
+        ? String((err as { stderr?: unknown }).stderr ?? "").trim()
+        : "";
+    throw new Error(`解压 deps.tgz 失败（${tarBin}）${stderr ? `：${stderr.slice(0, 500)}` : ""}`);
+  }
   const missing = REQUIRED_PKGS.filter((name) => !fs.existsSync(pkgPath(nmDir, name)));
   if (missing.length) {
     throw new Error(`解压 deps.tgz 不完整，缺少：${missing.join(", ")}`);

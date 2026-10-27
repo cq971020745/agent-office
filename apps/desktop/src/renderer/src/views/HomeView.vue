@@ -622,7 +622,7 @@ onMounted(() => {
                     </div>
                   </div>
                   <div v-else-if="modelCount" class="pop-empty">无匹配模型</div>
-                  <div v-else class="pop-empty">还没有可用模型，请管理员先在管理后台添加并启用</div>
+                  <div v-else class="pop-empty">还没有可用模型——点击下方「配置自定义模型」，添加并启用你自己的供应商</div>
                   <div class="pop-foot">
                     <button type="button" class="config-link" @click="openModelConfig">
                       <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
@@ -691,7 +691,8 @@ onMounted(() => {
       </div>
 
       <div v-if="!agents.length" class="hint" style="text-align: center; margin-top: 18px">
-        还没有可用的 Agent —— 管理员登录后在「管理后台」添加供应商与 Agent
+        还没有可用的专家 —— <RouterLink class="hint-link" to="/experts">新建一个专家</RouterLink>即可派发任务；模型在
+        <RouterLink class="hint-link" to="/models">模型供应商</RouterLink> 页添加并启用
       </div>
     </div>
   </div>
@@ -937,6 +938,10 @@ onMounted(() => {
   font-size: 11px;
   font-weight: 400;
   color: var(--text-3);
+}
+.hint .hint-link {
+  color: var(--accent-strong);
+  text-decoration: underline;
 }
 .sub-list {
   max-height: 264px;

@@ -899,6 +899,8 @@ async function onSend(): Promise<void> {
     await refreshMessages();
   } catch (err) {
     sendError.value = err instanceof Error ? err.message : "发送失败";
+    // 发送前已清空输入：失败时服务端没有收到这条消息，把文本还回去（用户已重新输入则以输入为准）
+    if (!draft.value.trim()) draft.value = prompt;
     await refreshMessages();
   } finally {
     sending.value = false;

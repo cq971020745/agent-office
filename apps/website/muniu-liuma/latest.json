@@ -1,6 +1,6 @@
 {
   "version": "0.1.5",
-  "publishedAt": "2026-10-26",
+  "publishedAt": "2026-10-27",
   "githubRelease": "https://github.com/cq971020745/agent-office/releases/tag/v0.1.5",
   "files": {
     "win-x64": "Muni-0.1.5-win-x64-Setup.exe",
@@ -12,8 +12,8 @@
     "web": "云端控制台 http://139.196.147.134/AI/muniu-workbench/；知识库登录依赖企业代理。桌面一体包内嵌服务端默认本机 38617。"
   },
   "sha256": {
-    "win-x64": "bb482e107293305339183db7c99219e7ed64643607aa258f8b3573b8a8676ed9",
-    "mac-arm64": "3b2f80027a8881eda5757047e980fb9c04802946a48e2724b1395227d35580c0",
-    "mac-x64": "04c6a147e9b15da3b7272799bce03aaf3d9ef4ca1a7fc0d920adfa4f1ac43fa3"
+    "win-x64": "e00595bd7a84d353c4be4f5527ed313e5f3a6001758369ace5a43b9cbad2f70b",
+    "mac-arm64": "a8edbf0d704cdda7d23ebe50893f27fe582b9810c9f72ad6ac8ada3bd4766a43",
+    "mac-x64": "17018f1b65890c8b9450ad0ea4cd9ca8e14b282a05b0f5ec81965f026dfa974b"
   }
 }

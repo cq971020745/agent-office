@@ -1,19 +1,19 @@
 {
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publishedAt": "2026-10-27",
-  "githubRelease": "https://github.com/cq971020745/agent-office/releases/tag/v0.1.5",
+  "githubRelease": "https://github.com/cq971020745/agent-office/releases/tag/v0.1.6",
   "files": {
-    "win-x64": "Muni-0.1.5-win-x64-Setup.exe",
-    "mac-arm64": "Muni-0.1.5-mac-arm64.dmg",
-    "mac-x64": "Muni-0.1.5-mac-x64.dmg"
+    "win-x64": "Muni-0.1.6-win-x64-Setup.exe",
+    "mac-arm64": "Muni-0.1.6-mac-arm64.dmg",
+    "mac-x64": "Muni-0.1.6-mac-x64.dmg"
   },
   "notes": {
     "mac": "未使用 Apple 开发者证书；若提示已损坏，执行 xattr -cr /Applications/木牛流马.app。勿用微信转发。",
     "web": "云端控制台 http://139.196.147.134/AI/muniu-workbench/；知识库登录依赖企业代理。桌面一体包内嵌服务端默认本机 38617。"
   },
   "sha256": {
-    "win-x64": "e00595bd7a84d353c4be4f5527ed313e5f3a6001758369ace5a43b9cbad2f70b",
-    "mac-arm64": "a8edbf0d704cdda7d23ebe50893f27fe582b9810c9f72ad6ac8ada3bd4766a43",
-    "mac-x64": "17018f1b65890c8b9450ad0ea4cd9ca8e14b282a05b0f5ec81965f026dfa974b"
+    "win-x64": "e0dfe8ad3b87c2312c08802b4a52c9fd6f7c941feffeb022f9010e6f37c6c758",
+    "mac-arm64": "6ab9e70b6eebdfcdc716fe4b68df66eb0dae4f8582feadcb9b601afde14b162b",
+    "mac-x64": "b629c120c4c9f76d97029b24c7de055e3ba7a330d391a126ac9f0f211e3629fd"
   }
 }

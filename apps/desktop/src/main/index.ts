@@ -1,9 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, webContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray, webContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { showServerStartError, startBundledServer, stopBundledServer } from "./server-host.js";
 import { APP_NAME, APP_SLOGAN, APP_TAGLINE } from "../brand.js";
+import trayIcon from "./assets/tray.png?asset";
+// 开发态窗口/任务栏图标；打包后 Windows 任务栏用 exe 内嵌图标，mac 用 Dock 图标，此配置只兜底
+import appIcon from "./assets/app-icon.png?asset";
 
 // scoped 包名 @office/desktop 会让 userData 变成 Roaming\@office/desktop（含 /），Windows 上写数据会失败
 // 目录名保留历史 "Agent Office"，避免升级后丢失本机数据
@@ -78,6 +81,7 @@ function createWindow(): void {
     width: 1240,
     height: 820,
     title: APP_NAME,
+    icon: appIcon,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -110,6 +114,59 @@ function createWindow(): void {
     event.preventDefault();
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
   });
+
+  // 本地模式：关窗 = 隐藏到托盘，内置服务与执行中的任务继续跑；退出走托盘/菜单的「退出」。
+  // 远程模式任务跑在中心服务端，与窗口无关，维持关窗即退出；macOS 维持「关窗留在 Dock」语义。
+  win.on("close", (event) => {
+    if (quitting || remoteMode || process.platform === "darwin") return;
+    event.preventDefault();
+    win.hide();
+    if (!trayHintShown) {
+      trayHintShown = true;
+      new Notification({
+        title: APP_NAME,
+        body: "已最小化到托盘，任务继续执行；托盘图标右键菜单可退出",
+      }).show();
+    }
+  });
+}
+
+// ---------- 托盘常驻（本地模式） ----------
+let tray: Tray | null = null;
+// 「退出」菜单与 before-quit 置位后，close 拦截放行，窗口才能真正销毁
+let quitting = false;
+let remoteMode = false;
+let trayHintShown = false;
+
+function showMainWindow(): void {
+  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+  if (win) {
+    win.show();
+    win.focus();
+  } else {
+    createWindow();
+  }
+}
+
+function ensureTray(): void {
+  // macOS 关窗后本就不退出（Dock 常驻），不需要托盘
+  if (tray || remoteMode || process.platform === "darwin") return;
+  tray = new Tray(trayIcon);
+  tray.setToolTip(`${APP_NAME} —— 关闭窗口后任务继续执行`);
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "显示主窗口", click: showMainWindow },
+      { type: "separator" },
+      {
+        label: "退出",
+        click: () => {
+          quitting = true;
+          app.quit();
+        },
+      },
+    ])
+  );
+  tray.on("click", showMainWindow);
 }
 
 // 方案 B：中心服务端地址持久化（userData/server-config.json）；远程模式重启后不再拉本机服务端
@@ -267,6 +324,7 @@ app.whenReady().then(async () => {
   // 方案 B：配置了中心服务端时是远程模式——不再启动本机服务端，直连远程
   const remoteServer = readServerConfig().baseUrl;
   if (remoteServer) {
+    remoteMode = true;
     if (splash && !splash.isDestroyed()) splash.close();
     console.log(`[server] 远程模式：${remoteServer}（跳过本机服务端）`);
     createWindow();
@@ -286,6 +344,7 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
+  ensureTray();
   if (splash && !splash.isDestroyed()) splash.close();
 
   app.on("activate", () => {
@@ -294,9 +353,16 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", () => {
+  quitting = true;
   stopBundledServer();
 });
 
+app.on("will-quit", () => {
+  tray?.destroy();
+  tray = null;
+});
+
 app.on("window-all-closed", () => {
+  // 本地模式关窗只是隐藏，不会走到这里；这里兜底保持原语义
   if (process.platform !== "darwin") app.quit();
 });

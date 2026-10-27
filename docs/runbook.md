@@ -89,11 +89,11 @@ SQLite 使用 WAL，运行中仅复制 `app.db` 可能漏掉事务；在线备�
 | --- | --- |
 | 端口已占用 | 确认 38617/38618 的占用进程，只复用或停止已确认属于本项目的实例 |
 | API 正常、网页 404 | 确认构建产物和 `WEB_DIST`，构建后重启服务 |
-| 本机 Electron 异常退出 | 2026-10-26 在 Windows 本机观察到 `EXCEPTION_BREAKPOINT`（退出码 2147483651）；未定位根因，关闭 GPU 仍复现。可先用构建后的 Web 控制台；不能据此认定所有平台或安装包均失败 |
+| 本机 Electron 异常退出 | `EXCEPTION_BREAKPOINT`（退出码 2147483651）已定位：工作目录被外部工具（OpenAI Codex 沙箱）写入 NTFS 强制完整性标签 `Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)`，随继承进入 electron.exe，Chromium 检测到浏览器进程低于 Medium 完整性即主动断言崩溃，与 GPU/非 ASCII 路径无关。处理：`icacls <目录>` 查看标签与拒绝 ACE；`icacls <目录> /reset` 清 DACL 后 `icacls <目录> /setintegritylevel (OI)(CI)M` 升回 Medium（自动向子文件传播）；用 `apps/desktop/node_modules/electron/dist/electron.exe --version` 验证。若目录被 Codex 再次沙箱化会复发 |
 | 知识库登录/工作台不可用 | 检查企业网络、`KB_BASE_URL`、对应插件、CSP 的 API 源；不重做或绕过企业知识库认证 |
 | WPS 同步 401/403 | 先登录本机紫金协作，再由同步入口触发 `wps-env-gate` 自愈；不手拼 Cookie |
 | 插件入口 503 | 查插件 enabled 与 started 状态，检查服务端 `[plugin:<id>]` 日志 |
 | 自动记忆没有增加 | 确认 `memory` 已启用、`MEMORY_AUTO_CAPTURE=1`、任务轮次成功并有足够回复内容 |
 | 换肤缺纹理/字体 | 检查包相对路径、文件 MIME、登录令牌与 CSP；损坏皮肤会回退默认 |
 
-本地一体包在 Windows/Linux 关闭最后一个窗口会退出并停止内置服务；没有托盘常驻。开发模式的独立服务端与远程模式不随桌面窗口退出，不能混用这两种行为解释。
+本地一体包在 Windows/Linux 关闭窗口会隐藏到系统托盘并继续执行（首次关闭有系统通知；托盘菜单可显示主窗口或退出）；macOS 沿用系统惯例、远程模式关窗即退出，均不走托盘。开发模式的独立服务端与远程模式不随桌面窗口退出，不能混用这两种行为解释。

@@ -36,7 +36,7 @@
 | `pnpm build` | 通过，完成共享包、服务端及 Electron 主进程/预加载/渲染构建 |
 | 本机 API | `/auth/captcha` 返回 200 |
 | 开发 Web 界面 | 在浏览器确认登录页渲染；启动排障时临时运行在 38618，临时启动脚本位于系统临时目录，不随仓库交付 |
-| Electron 开发窗口 | 本机 Windows 原生进程报 `EXCEPTION_BREAKPOINT`，直接启动与禁用 GPU 仍复现；根因未定位 |
+| Electron 开发窗口 | 2026-10-27 定位 `EXCEPTION_BREAKPOINT` 根因：仓库目录被 Codex 沙箱写入 Low 强制完整性标签并继承进 electron.exe，与 GPU/非 ASCII 路径无关（检测与修复见 [运行手册](runbook.md) 故障排查）。恢复 Medium 后 `electron --version` 与完整 `pnpm dev:server` + `dev:desktop` 冒烟通过，4 个 Electron 进程稳定运行 |
 | Windows 包内运行时 | Windows 原生 tar 解压成功，捆绑 Node 实际打开 SQLite；独立数据目录的包内服务启动并返回受保护接口 401 |
 | Mac ARM / Intel 安装包 | 对应架构 Runner 构建成功；云端文件 SHA-256 与 Release 资产一致，未进行实体 Mac 界面验收 |
 | 云端业务服务 | systemd active/enabled，控制台 HTTP 200，受保护接口未登录返回 401 |
@@ -46,11 +46,10 @@
 
 ## 已知体验缺口
 
-- 首页模型空状态仍要求管理员添加，与个人供应商模式不一致。
-- 记忆页介绍默认自动沉淀，但真实开关默认关闭。
-- 追问发送前清空文本，失败分支不恢复输入；草稿只在页面内存中。
-- 巡检表单不支持选择供应商和模型，后端接口虽支持，未显式指定时使用所属用户可用配置。
-- 本地一体包没有托盘常驻；关闭最后一个窗口会停止内置服务。独立服务或远程服务不受该窗口关闭影响。
+2026-10-27 更新：以下五项已在本分支实现（尚未合入主干）：首页空状态改为引导用户自建专家与供应商；记忆页文案按真实 `MEMORY_AUTO_CAPTURE` 开关展示；追问失败时恢复已发送文本；巡检表单支持选择本人启用的供应商/模型并在编辑时回显；本地一体包 Windows/Linux 关窗隐藏到托盘并继续执行（首次有系统通知）。安装包桌面图标已替换为项目图标（`apps/desktop/build/icon.ico|icns|png`，electron-builder 自动识别）。
+
 - 成果物无版本快照和独立验收状态，DOCX/XLSX/PPTX 无页级预览。
+- 追问草稿仅在页面内存中，切页或重启后丢失。
+- 追问失败恢复只还原文本，不还原附件与引用上下文。
 
 候选改进与 UI 范围在 [产品与 UI 待办](product-roadmap.md)，均未因文档同步而自动转为已实现或已承诺需求。

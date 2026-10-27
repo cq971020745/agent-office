@@ -54,3 +54,18 @@ npm_config_python=/www/server/pyporject_evn/3.9.23/bin/python3.9 npm_config_node
 - 官网切版前的 `index.html` 与 `latest.json` 备份：`/var/backups/muniu-liuma/20261026-125653/site-before-015/`。仅回退下载入口时恢复这两个文件即可，不删除版本安装包。
 - 后续程序回滚：将 current 指回已验证 release，再重启本服务；数据目录不随程序目录删除，先按 [运行手册](runbook.md) 备份数据库与文件。
 - 下载发布使用 `.uploading` 临时文件，哈希核对后原子改名；所有安装包准备好后才更新 `latest.json`，旧版本文件保留。
+
+## 2026-10-27 资产刷新（commit 385199c，版本号仍 0.1.5）
+
+修复皮肤市场「发布到 npm」：npm 令牌无效时服务端不再回 401（改回 403），客户端不会误判会话过期把人登出；发布失败也保留已填令牌（fix(skins) 提交 `385199c`，`aca3172` 更新 latest.json 哈希）。
+
+已完成并线上验证：
+
+- GitHub Release v0.1.5 的四个安装/便携包与 `SHA256SUMS-0.1.5.txt` 已全部替换：Windows 两包为本机构建（包内服务端 dist 验证含修复、捆绑 Node SQLite 冒烟通过），macOS 双架构为 CI（Run 40464049426，全新检出构建 + 原生冒烟通过）。
+- GitHub Pages `latest.json` 已更新新哈希（publishedAt 2026-10-27），下载按钮指向 Release 资产，Win Setup 下载 Content-Length 与本地文件一致。
+- 服务端部署包 `dist/muniu-server-0.1.5.tar.gz`（commit 385199c）已构建，包内 `server/dist/plugins/skin-market.js` 含 403 修复；全量服务端测试通过。
+
+待办（需服务器 SSH，本机免密不可用）：
+
+1. 国内官网 `/var/chenqiang/AI/muniu-liuma/`：用与 GitHub 相同的四个安装包 + `SHA256SUMS-0.1.5.txt` 覆盖 `releases/0.1.5/`（沿用 `.uploading` 临时名 + 原子改名），并更新站点根目录 `latest.json`（直接用仓库 `apps/website/muniu-liuma/latest.json` 原文，不加 downloadBase）。官网 index.html 无需改动。
+2. 云端业务服务重发：新 release 目录解压部署包 → `server/` 装生产依赖 → 按上文 SQLite 重建流程处理 better-sqlite3 → `ln -sfn` 切 current → 重启 `muniu-liuma.service` → 验证受保护接口 401、控制台 200。

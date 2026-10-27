@@ -332,7 +332,8 @@ export const skinMarketPlugin: PlatformPlugin = {
           return reply.code(409).send({ error: `${name}@${version} 已存在——换一个版本号再发` });
         }
         if (res.status === 401 || res.status === 403) {
-          return reply.code(401).send({ error: "令牌无效或无权发布该包名（检查 npm 访问令牌 / scope 归属）" });
+          // 403 而非 401：客户端把任何 401 当会话过期强制登出，这里只是用户自己的 npm 令牌问题
+          return reply.code(403).send({ error: "npm 令牌无效或无权发布该包名（检查 npm 访问令牌 / scope 归属），不影响本应用登录" });
         }
         return reply.code(502).send({ error: `registry 返回 ${res.status}：${why}` });
       } catch (err) {

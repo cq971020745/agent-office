@@ -353,14 +353,15 @@ async function publishToNpm(): Promise<void> {
   }
   publishing.value = true;
   try {
+    // 记住/清除不依赖发布结果：令牌错发布失败时也别让用户重新粘贴
+    if (publishRemember.value) localStorage.setItem("agent-office-npm-token", publishToken.value.trim());
+    else localStorage.removeItem("agent-office-npm-token");
     const result = await publishSkinToNpm({
       id: publishSkinId.value,
       name: publishName.value.trim() || undefined,
       version: publishVersion.value.trim() || undefined,
       token: publishToken.value.trim(),
     });
-    if (publishRemember.value) localStorage.setItem("agent-office-npm-token", publishToken.value.trim());
-    else localStorage.removeItem("agent-office-npm-token");
     toast("success", `已发布 ${result.name}@${result.version}——其他人 npm 页签直接装`);
     npmPkgDraft.value = result.name;
     await searchNpm();

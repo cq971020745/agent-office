@@ -263,7 +263,7 @@ describe("skin-market 插件", () => {
         payload: { id: "publish-demo", token: "wrong" },
         headers: auth,
       });
-      assert.equal(badToken.statusCode, 401);
+      assert.equal(badToken.statusCode, 403);
 
       const ok = await app.inject({
         method: "POST",

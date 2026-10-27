@@ -65,7 +65,7 @@ npm_config_python=/www/server/pyporject_evn/3.9.23/bin/python3.9 npm_config_node
 - GitHub Pages `latest.json` 已更新新哈希（publishedAt 2026-10-27），下载按钮指向 Release 资产，Win Setup 下载 Content-Length 与本地文件一致。
 - 服务端部署包 `dist/muniu-server-0.1.5.tar.gz`（commit 385199c）已构建，包内 `server/dist/plugins/skin-market.js` 含 403 修复；全量服务端测试通过。
 
-待办（需服务器 SSH，本机免密不可用）：
+同日完成国内官网与云端服务更新（服务器密码 SSH，plink/pscp 执行）：
 
-1. 国内官网 `/var/chenqiang/AI/muniu-liuma/`：用与 GitHub 相同的四个安装包 + `SHA256SUMS-0.1.5.txt` 覆盖 `releases/0.1.5/`（沿用 `.uploading` 临时名 + 原子改名），并更新站点根目录 `latest.json`（直接用仓库 `apps/website/muniu-liuma/latest.json` 原文，不加 downloadBase）。官网 index.html 无需改动。
-2. 云端业务服务重发：新 release 目录解压部署包 → `server/` 装生产依赖 → 按上文 SQLite 重建流程处理 better-sqlite3 → `ln -sfn` 切 current → 重启 `muniu-liuma.service` → 验证受保护接口 401、控制台 200。
+- 云端服务：部署包解压到 `/opt/muniu-liuma/releases/0.1.5-385199c`，`npm install --omit=dev --ignore-scripts`——`onnxruntime-node` 的 install 脚本在本服务器下载 build list 被 302 拦截，而其二进制本随 npm 包自带，跳过脚本不影响运行（模块数 188 与上一 release 一致）；随后移开 `better-sqlite3/prebuilds/linux-x64.node` 为 `.glibc-newer`，按上文命令源码重编，实测建库/插入/查询通过；`ln -sfn` 切 `current` 后重启服务。验证：active、监听 `127.0.0.1:38617`，未登录访问 `/skins-market` 与 `POST /skins-market/npm/publish` 均 401，控制台与官网经 nginx（Host: 139.196.147.134）200，控制台 `assets/index-BDQaA1SR.js` 确认含新渲染层。
+- 国内官网：四个安装包 + `SHA256SUMS-0.1.5.txt` 以 `.uploading` 临时名原子覆盖 `releases/0.1.5/`，服务器端 `sha256sum -c` 全部 OK；站点根 `latest.json` 更新（仓库原文，无 downloadBase），旧档备份在 `/var/backups/muniu-liuma/latest.json.before-20261027-refresh`。公网 HEAD 四个下载链接均 200 且 Content-Length 与本地一致。

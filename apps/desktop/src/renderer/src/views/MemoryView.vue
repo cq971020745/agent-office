@@ -10,6 +10,8 @@ const kind = ref<MemoryItem["kind"]>("preference");
 const loading = ref(true);
 const saving = ref(false);
 const deleting = ref<string | null>(null);
+// 服务端真实开关（MEMORY_AUTO_CAPTURE，默认关）。文案按它展示，不再默认宣称自动沉淀
+const autoCapture = ref(false);
 /** 手动添加默认收起：主流记忆系统里用户的主动作是「查看/删除」，不是填表 */
 const showAdd = ref(false);
 
@@ -29,7 +31,9 @@ const EXAMPLES = [
 async function refresh(): Promise<void> {
   loading.value = true;
   try {
-    memories.value = (await listMemories()).memories;
+    const res = await listMemories();
+    memories.value = res.memories;
+    autoCapture.value = !!res.autoCapture;
   } catch (error) {
     toastError(error, "读取记忆失败");
   } finally {
@@ -97,7 +101,8 @@ onMounted(refresh);
         </span>
         <div>
           <strong>从任务沉淀</strong>
-          <small>任务完成后，可复用的经验与偏好会自动记下来</small>
+          <small v-if="autoCapture">任务成功完成后，可复用的经验与偏好会自动记下来</small>
+          <small v-else>自动沉淀当前未开启，记忆主要靠手动添加</small>
         </div>
       </div>
       <div class="how-item">
@@ -156,15 +161,16 @@ onMounted(refresh);
       <div class="guide-badge">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.6-9.3-8.4C.9 9.3 2.4 5.5 6 5.5c2 0 3.4 1.1 4 2.2.6-1.1 2-2.2 4-2.2 3.6 0 5.1 3.8 3.3 7.1C19 16.4 12 21 12 21z" /></svg>
       </div>
-      <h3>澄台会帮你记住这些事</h3>
+      <h3>木牛流马会帮你记住这些事</h3>
       <p class="guide-lead">
-        完成任务后，澄台会自动沉淀可复用的<b>偏好、项目约定和经验</b>；
+        <template v-if="autoCapture">完成任务后，木牛流马会自动沉淀可复用的<b>偏好、项目约定和经验</b>；</template>
+        <template v-else>手动记下你的<b>偏好、项目约定和经验</b>（当前部署未开启任务后自动沉淀）；</template>
         下次派发任务时作为参考资料带入，专家不用每次从头交代背景。
       </p>
       <ul class="guide-examples">
         <li v-for="example in EXAMPLES" :key="example">{{ example }}</li>
       </ul>
-      <p class="guide-note">内容由任务沉淀或你手动添加，只属于当前账号，随时可逐条删除。</p>
+      <p class="guide-note">{{ autoCapture ? "内容由任务沉淀或你手动添加" : "内容由你手动添加" }}，只属于当前账号，随时可逐条删除。</p>
       <button class="primary" type="button" @click="showAdd = true">手动添加一条</button>
     </section>
 

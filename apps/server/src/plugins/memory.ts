@@ -98,6 +98,9 @@ export const memoryPlugin: PlatformPlugin = {
           ...m,
           sourceTaskTitle: m.sourceTaskId ? titleById.get(m.sourceTaskId) ?? null : null,
         })),
+        // 前端据此展示真实捕获状态：自动沉淀默认关闭（MEMORY_AUTO_CAPTURE=1 才开启），
+        // 文案不能再默认宣称「完成任务会自动记下来」
+        autoCapture: process.env.MEMORY_AUTO_CAPTURE === "1",
       };
     });
     app.post("/memory", { onRequest: [app.authenticate] }, async (req, reply) => {

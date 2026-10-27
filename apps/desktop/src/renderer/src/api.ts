@@ -594,7 +594,11 @@ export interface MemoryItem {
 }
 
 export function listMemories() {
-  return request<{ memories: MemoryItem[] }>("/memory?limit=200");
+  return request<{
+    memories: MemoryItem[];
+    /** 服务端自动沉淀开关（MEMORY_AUTO_CAPTURE），默认关闭；文案据此展示真实状态 */
+    autoCapture?: boolean;
+  }>("/memory?limit=200");
 }
 
 export function createMemory(content: string, kind: MemoryItem["kind"]) {

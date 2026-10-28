@@ -20,37 +20,22 @@
 - GitHub Pages `latest.json` 已指向 0.1.6（`22a6913`），[Deploy Site Run 40501406359](https://github.com/cq971020745/agent-office/actions/runs/40501406359) 成功；线上 `https://cq971020745.github.io/agent-office/latest.json` 为 0.1.6 且含注入的 `downloadBase`，Release 下载链接 HEAD 200。
 - 服务端部署包 `dist/muniu-server-0.1.6.tar.gz` 已构建（`dist/deployment/release.json`：0.1.6 @ 991b792）。
 
-## 待执行：云端业务服务与国内官网
+## 2026-10-28 云端服务与国内官网更新（已完成）
 
-流程与 0.1.5 完全同款，需服务器 SSH（plink/pscp + 密码）。四个安装包本机均有：Windows 在 `apps/desktop/release/`，macOS 双包在 `C:\Temp\muni-016-mac\`（CI 产物下载副本，亦可 `gh release download v0.1.6` 重取）。
+### 云端业务服务（139.196.147.134，root SSH，plink/pscp 执行）
 
-### 云端业务服务（139.196.147.134）
+- 部署包 `pscp` 上传后解压到 `/opt/muniu-liuma/releases/0.1.6-991b792`（包内 `server/package.json` 为 0.1.6），`chown` 归 `muniu`。
+- `npm install --omit=dev --ignore-scripts` 模块数 188，与 0.1.5 基线一致；onnxruntime-node 的 install 脚本在本服务器被 302 拦截，二进制随 npm 包自带，跳过脚本不影响运行。
+- better-sqlite3 移开 `prebuilds/linux-x64.node` 为 `.glibc-newer` 后，按 0.1.5 记录的命令源码重编成功（服务器 Python 3.9.23 + Node 22.20.0 头文件）；临时 smoke 脚本实测建库/插入/查询通过（`smoke-ok {"a":1}`；注意 server 是 ESM 包，临时脚本须用 `.cjs` 后缀，且要放进 server 目录内才能解析依赖）。
+- `ln -sfn` 切 `current` 至 `0.1.6-991b792`（上一版本 `0.1.5-385199c` 保留作回滚点），重启 `muniu-liuma.service`：active/enabled，监听 `127.0.0.1:38617`。
+- 验证：控制台 `/AI/muniu-workbench/` 经 nginx 200；未登录 `/skins-market` 与 `POST /skins-market/npm/publish` 均 401；`/auth/captcha` 返回 502 为已知的企业知识库 `10.50.11.17` 不可达（日志显示上游约 10s 超时后 502，0.1.5 起即如此），非本次变更引入。
+- 服务器临时文件（`/tmp` 部署包、smoke 脚本与临时库）已清理。
 
-```bash
-pscp dist/muniu-server-0.1.6.tar.gz <user>@139.196.147.134:/tmp/
-ssh <user>@139.196.147.134
-sudo mkdir -p /opt/muniu-liuma/releases/0.1.6-991b792
-sudo tar -xzf /tmp/muniu-server-0.1.6.tar.gz -C /opt/muniu-liuma/releases/0.1.6-991b792
-sudo chown -R muniu:muniu /opt/muniu-liuma/releases/0.1.6-991b792
-cd /opt/muniu-liuma/releases/0.1.6-991b792/server
-sudo -u muniu npm install --omit=dev --ignore-scripts
-# onnxruntime-node 的 install 脚本在本服务器被 302 拦截；二进制随 npm 包自带，跳过脚本不影响运行
-sudo -u muniu mv node_modules/better-sqlite3/prebuilds/linux-x64.node node_modules/better-sqlite3/prebuilds/linux-x64.node.glibc-newer
-sudo -u muniu npm_config_python=/www/server/pyporject_evn/3.9.23/bin/python3.9 npm_config_nodedir=/www/server/nodejs/v22.20.0 npm rebuild better-sqlite3 --build-from-source
-sudo -u muniu node -e "const db=require('better-sqlite3')('/tmp/smoke-016.db');db.exec('create table t(a)');db.prepare('insert into t values(?)').run(1);console.log(db.prepare('select a from t').get());db.close()"
-sudo ln -sfn /opt/muniu-liuma/releases/0.1.6-991b792 /opt/muniu-liuma/current
-sudo systemctl restart muniu-liuma.service
-systemctl is-active muniu-liuma.service
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:38617/auth/captcha
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: 139.196.147.134' http://127.0.0.1/AI/muniu-workbench/
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: 139.196.147.134' http://127.0.0.1/skins-market
-```
+### 国内官网（`/var/chenqiang/AI/muniu-liuma/`）
 
-验收：服务 active；本机回环与控制台 200；未登录访问 `/skins-market` 401。
-
-### 国内官网（下载入口）
-
-四个安装包 + `SHA256SUMS-0.1.6.txt` 传到 `/var/chenqiang/AI/muniu-liuma/releases/0.1.6/`：先以 `.uploading` 临时名上传，改名后再 `sha256sum -c SHA256SUMS-0.1.6.txt`（新目录无覆盖风险，失败即删除重传）。随后备份并覆盖站点根 `latest.json`（用仓库 `apps/website/muniu-liuma/latest.json` 原文，**无** downloadBase；备份放 `/var/backups/muniu-liuma/`）。公网 HEAD 四个下载链接应为 200 且 Content-Length 与本地一致，`/AI/muniu-liuma/latest.json` 显示 0.1.6。
+- 四个安装包 + `SHA256SUMS-0.1.6.txt` 以 `.uploading` 临时名上传至 `releases/0.1.6/`，改名后服务器端 `sha256sum -c` 全部 OK。
+- 站点根 `latest.json` 更新为仓库原文（无 downloadBase），旧档备份：`/var/backups/muniu-liuma/latest.json.before-20261028-016`。
+- 公网验证：`/AI/muniu-liuma/latest.json` 显示 0.1.6；四个下载 HEAD 200 且 Content-Length 与本地一致（291547049 / 291290841 / 305097557 / 316254307）；`/AI/muniu-workbench/` 公网 200。
 
 ### 回滚
 
